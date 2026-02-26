@@ -1,23 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import Settings from '@/models/Settings';
-import { getApiUserId } from '@/lib/apiAuth';
+import { getApiContext, requireRole } from '@/lib/apiAuth';
 import type { SocialAccount } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const userId = await getApiUserId();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await getApiContext();
+  if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await connectDB();
-  const settings = await Settings.findOne({ userId }).lean() as { socialAccounts?: SocialAccount[] } | null;
+  const settings = await Settings.findOne({ workspaceId: ctx.workspaceId }).lean() as { socialAccounts?: SocialAccount[] } | null;
   return NextResponse.json({ accounts: settings?.socialAccounts ?? [] });
 }
 
 export async function POST(req: NextRequest) {
-  const userId = await getApiUserId();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await getApiContext();
+  if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!requireRole(ctx, 'owner', 'editor')) {
+    return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
+  }
 
   await connectDB();
   const account: SocialAccount = await req.json();
@@ -26,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'id and platform are required' }, { status: 400 });
   }
 
-  const settings = await Settings.findOne({ userId });
+  const settings = await Settings.findOne({ workspaceId: ctx.workspaceId });
   if (!settings) {
     return NextResponse.json({ error: 'Settings not found — save settings first' }, { status: 404 });
   }
@@ -41,8 +45,12 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const userId = await getApiUserId();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await getApiContext();
+  if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!requireRole(ctx, 'owner', 'editor')) {
+    return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
+  }
 
   await connectDB();
   const { searchParams } = new URL(req.url);
@@ -52,7 +60,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'id query param required' }, { status: 400 });
   }
 
-  const settings = await Settings.findOne({ userId });
+  const settings = await Settings.findOne({ workspaceId: ctx.workspaceId });
   if (!settings) {
     return NextResponse.json({ error: 'Settings not found' }, { status: 404 });
   }

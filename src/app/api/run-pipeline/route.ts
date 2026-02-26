@@ -1,19 +1,23 @@
 import { NextResponse } from 'next/server';
-import { getApiUserId } from '@/lib/apiAuth';
+import { getApiContext, requireRole } from '@/lib/apiAuth';
 import { runScrape } from '@/lib/scraper';
 import { runEvaluation } from '@/lib/ai';
 
 export async function POST() {
-  const userId = await getApiUserId();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await getApiContext();
+  if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!requireRole(ctx, 'owner', 'editor')) {
+    return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
+  }
 
   const startedAt = new Date().toISOString();
 
   // Phase 1: Scrape
-  const scrapeResult = await runScrape(userId);
+  const scrapeResult = await runScrape(ctx.workspaceId);
 
   // Phase 2: Evaluate
-  const evalResult = await runEvaluation(userId);
+  const evalResult = await runEvaluation(ctx.workspaceId);
 
   const finishedAt = new Date().toISOString();
 

@@ -11,8 +11,15 @@ const SocialAccountSchema = new Schema({
   active: { type: Boolean, default: true },
 }, { _id: false });
 
+const CompetitorSchema = new Schema({
+  name: { type: String, required: true },
+  url: { type: String, default: '' },
+  description: { type: String, default: '' },
+}, { _id: false });
+
 const SettingsSchema = new Schema({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  workspaceId: { type: Schema.Types.ObjectId, ref: 'Workspace', index: true },
   companyName: { type: String, required: true },
   companyDescription: { type: String, required: true },
   keywords: [{ type: String }],
@@ -50,6 +57,17 @@ const SettingsSchema = new Schema({
     }, { _id: false }),
     default: {},
   },
+  // Competitor Intelligence
+  competitors: { type: [CompetitorSchema], default: [] },
+  competitorAlertThreshold: { type: Number, default: 60 },
+  // Keyword Discovery
+  suggestedKeywords: [{ type: String }],
+  keywordSuggestionsLastRun: { type: Date },
+  // A/B Testing
+  abTestingEnabled: { type: Boolean, default: true },
+  abVariationCount: { type: Number, default: 3, min: 2, max: 5 },
+  abTonePresets: { type: [String], default: ['helpful', 'professional', 'witty'] },
+  abAutoOptimize: { type: Boolean, default: false },
 }, { timestamps: true });
 
 export default mongoose.models.Settings || mongoose.model('Settings', SettingsSchema);

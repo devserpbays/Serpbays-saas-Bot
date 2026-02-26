@@ -1,20 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import Settings from '@/models/Settings';
-import { getApiUserId } from '@/lib/apiAuth';
+import ActivityLog from '@/models/ActivityLog';
+import { getApiContext, requireRole } from '@/lib/apiAuth';
 
 export async function GET() {
-  const userId = await getApiUserId();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await getApiContext();
+  if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await connectDB();
-  const settings = await Settings.findOne({ userId }).lean();
+  const settings = await Settings.findOne({ workspaceId: ctx.workspaceId }).lean();
   return NextResponse.json({ settings });
 }
 
 export async function PUT(req: NextRequest) {
-  const userId = await getApiUserId();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await getApiContext();
+  if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  if (!requireRole(ctx, 'owner', 'editor')) {
+    return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
+  }
 
   await connectDB();
   const body = await req.json();
@@ -28,9 +33,11 @@ export async function PUT(req: NextRequest) {
     quoraKeywords, quoraDailyLimit, quoraAutoPostThreshold,
     youtubeKeywords, youtubeDailyLimit, youtubeAutoPostThreshold,
     pinterestKeywords, pinterestDailyLimit, pinterestAutoPostThreshold,
+    competitors, competitorAlertThreshold,
+    abTestingEnabled, abVariationCount, abTonePresets, abAutoOptimize,
   } = body;
 
-  let settings = await Settings.findOne({ userId });
+  let settings = await Settings.findOne({ workspaceId: ctx.workspaceId });
 
   if (settings) {
     settings.companyName = companyName ?? settings.companyName;
@@ -59,10 +66,19 @@ export async function PUT(req: NextRequest) {
     if (pinterestKeywords !== undefined) settings.pinterestKeywords = pinterestKeywords;
     if (pinterestDailyLimit !== undefined) settings.pinterestDailyLimit = pinterestDailyLimit;
     if (pinterestAutoPostThreshold !== undefined) settings.pinterestAutoPostThreshold = pinterestAutoPostThreshold;
+    // Competitor fields
+    if (competitors !== undefined) settings.competitors = competitors;
+    if (competitorAlertThreshold !== undefined) settings.competitorAlertThreshold = competitorAlertThreshold;
+    // A/B Testing fields
+    if (abTestingEnabled !== undefined) settings.abTestingEnabled = abTestingEnabled;
+    if (abVariationCount !== undefined) settings.abVariationCount = abVariationCount;
+    if (abTonePresets !== undefined) settings.abTonePresets = abTonePresets;
+    if (abAutoOptimize !== undefined) settings.abAutoOptimize = abAutoOptimize;
     await settings.save();
   } else {
     settings = await Settings.create({
-      userId,
+      userId: ctx.userId,
+      workspaceId: ctx.workspaceId,
       companyName: companyName || 'My Company',
       companyDescription: companyDescription || '',
       keywords: keywords || [],
@@ -89,8 +105,23 @@ export async function PUT(req: NextRequest) {
       pinterestKeywords: pinterestKeywords || [],
       pinterestDailyLimit: pinterestDailyLimit ?? 5,
       pinterestAutoPostThreshold: pinterestAutoPostThreshold ?? 70,
+      competitors: competitors || [],
+      competitorAlertThreshold: competitorAlertThreshold ?? 60,
+      abTestingEnabled: abTestingEnabled ?? true,
+      abVariationCount: abVariationCount ?? 3,
+      abTonePresets: abTonePresets || ['helpful', 'professional', 'witty'],
+      abAutoOptimize: abAutoOptimize ?? false,
     });
   }
+
+  // Log activity
+  await ActivityLog.create({
+    workspaceId: ctx.workspaceId,
+    userId: ctx.userId,
+    action: 'settings.updated',
+    targetType: 'settings',
+    targetId: (settings._id as { toString(): string }).toString(),
+  });
 
   return NextResponse.json({ settings });
 }

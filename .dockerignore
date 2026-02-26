@@ -1,0 +1,10 @@
+node_modules
+.next
+profiles
+.git
+.env.local
+.env*.local
+*.md
+Dockerfile
+.dockerignore
+screenshot.mjs

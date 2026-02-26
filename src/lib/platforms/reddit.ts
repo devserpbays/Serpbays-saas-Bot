@@ -58,7 +58,7 @@ export async function verifyRedditCookies(opts: VerifyOptions): Promise<Verifica
     }
 
     const accountId = `rd_${username || 'unknown'}`;
-    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, verifiedAt: new Date().toISOString() }));
+    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, cookieMap: opts.cookieMap, verifiedAt: new Date().toISOString() }));
 
     return { success: true, username, displayName: username, accountId, profileDir };
   } catch (err) {

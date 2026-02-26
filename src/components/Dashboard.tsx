@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { signOut, useSession } from 'next-auth/react';
-import type { IPost, SocialAccount } from '@/lib/types';
+import type { IPost, SocialAccount, WorkspaceRole } from '@/lib/types';
 import PostCard from './PostCard';
 import SettingsPanel from './SettingsPanel';
+import ActivityFeed from './ActivityFeed';
 
 interface PostsResponse {
   posts: IPost[];
@@ -23,6 +24,8 @@ interface Stats {
   posted: number;
   byPlatform: Record<string, number>;
   postedByPlatform: Record<string, number>;
+  competitorOpportunities: number;
+  tonePerformance: Array<{ platform: string; tone: string; avgEngagementScore: number; totalPosts: number }>;
 }
 
 interface PipelineResult {
@@ -33,6 +36,21 @@ interface PipelineResult {
   errors: string[];
   startedAt: string;
   finishedAt: string;
+}
+
+interface WorkspaceInfo {
+  _id: string;
+  name: string;
+  slug: string;
+  members: Array<{ userId: string; role: string }>;
+}
+
+interface KeywordMetric {
+  keyword: string;
+  totalPosts: number;
+  avgScore: number;
+  trend: 'rising' | 'falling' | 'stable';
+  trendPercent: number;
 }
 
 interface PlatformMeta {
@@ -131,13 +149,14 @@ const statusFilters: { value: string; label: string }[] = [
 const POLL_INTERVAL_MS = 10_000;
 
 export default function Dashboard() {
-  const { data: session } = useSession();
+  const { data: session, update: updateSession } = useSession();
   const [posts, setPosts] = useState<IPost[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [platformFilter, setPlatformFilter] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
 
   const [scraping, setScraping] = useState(false);
   const [evaluating, setEvaluating] = useState(false);
@@ -152,24 +171,60 @@ export default function Dashboard() {
     approved: 0, rejected: 0, posted: 0,
     byPlatform: {},
     postedByPlatform: {},
+    competitorOpportunities: 0,
+    tonePerformance: [],
   });
 
   const [enabledPlatforms, setEnabledPlatforms] = useState<string[]>([]);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
 
+  // Workspace state
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
+  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null);
+  const [showWorkspaceSwitcher, setShowWorkspaceSwitcher] = useState(false);
+  const [userRole, setUserRole] = useState<WorkspaceRole>('owner');
+
+  // Keyword metrics
+  const [keywordMetrics, setKeywordMetrics] = useState<KeywordMetric[]>([]);
+
+  // Opportunity filter
+  const [showOpportunities, setShowOpportunities] = useState(false);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchWorkspaces = useCallback(async () => {
+    try {
+      const res = await fetch('/api/workspaces');
+      const data = await res.json();
+      setWorkspaces(data.workspaces || []);
+
+      if (session?.user?.activeWorkspaceId) {
+        const active = (data.workspaces || []).find(
+          (w: WorkspaceInfo) => w._id === session.user.activeWorkspaceId
+        );
+        if (active) {
+          setActiveWorkspace(active);
+          const member = active.members.find(
+            (m: { userId: string }) => m.userId === session.user.id
+          );
+          if (member) setUserRole(member.role as WorkspaceRole);
+        }
+      }
+    } catch {/* silent */}
+  }, [session?.user?.activeWorkspaceId, session?.user?.id]);
 
   const fetchPosts = useCallback(async () => {
     const params = new URLSearchParams();
     if (statusFilter) params.set('status', statusFilter);
     if (platformFilter) params.set('platform', platformFilter);
+    if (showOpportunities) params.set('opportunities', 'true');
     params.set('page', String(page));
     params.set('limit', '20');
     const res = await fetch(`/api/posts?${params}`);
     const data: PostsResponse = await res.json();
     setPosts(data.posts);
     setTotal(data.total);
-  }, [statusFilter, platformFilter, page]);
+  }, [statusFilter, platformFilter, page, showOpportunities]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -185,6 +240,8 @@ export default function Dashboard() {
         posted:           data.byStatus?.posted ?? 0,
         byPlatform:       data.byPlatform ?? {},
         postedByPlatform: data.postedByPlatform ?? {},
+        competitorOpportunities: data.competitorOpportunities ?? 0,
+        tonePerformance:  data.tonePerformance ?? [],
       });
     } catch {/* silent */}
   }, []);
@@ -200,19 +257,71 @@ export default function Dashboard() {
     } catch {/* silent */}
   }, []);
 
-  useEffect(() => {
-    fetchPosts();
-    fetchStats();
-    fetchSettings();
-  }, [fetchPosts, fetchStats, fetchSettings]);
+  const fetchKeywordMetrics = useCallback(async () => {
+    try {
+      const res = await fetch('/api/keyword-metrics?days=14');
+      const data = await res.json();
+      setKeywordMetrics(data.keywords || []);
+    } catch {/* silent */}
+  }, []);
 
   useEffect(() => {
+    fetchWorkspaces();
+  }, [fetchWorkspaces]);
+
+  useEffect(() => {
+    if (activeWorkspace) {
+      fetchPosts();
+      fetchStats();
+      fetchSettings();
+      fetchKeywordMetrics();
+    }
+  }, [activeWorkspace, fetchPosts, fetchStats, fetchSettings, fetchKeywordMetrics]);
+
+  useEffect(() => {
+    if (!activeWorkspace) return;
     pollRef.current = setInterval(() => {
       fetchStats();
       fetchPosts();
     }, POLL_INTERVAL_MS);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [fetchStats, fetchPosts]);
+  }, [activeWorkspace, fetchStats, fetchPosts]);
+
+  const handleWorkspaceSwitch = async (workspaceId: string) => {
+    try {
+      await fetch('/api/workspaces/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId }),
+      });
+      await updateSession({ activeWorkspaceId: workspaceId });
+      const ws = workspaces.find(w => w._id === workspaceId);
+      if (ws) {
+        setActiveWorkspace(ws);
+        const member = ws.members.find(m => m.userId === session?.user?.id);
+        if (member) setUserRole(member.role as WorkspaceRole);
+      }
+      setShowWorkspaceSwitcher(false);
+      setPage(1);
+    } catch {/* silent */}
+  };
+
+  const handleCreateWorkspace = async () => {
+    const name = prompt('Workspace name:');
+    if (!name) return;
+    try {
+      const res = await fetch('/api/workspaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (data.workspace) {
+        await handleWorkspaceSwitch(data.workspace._id);
+        fetchWorkspaces();
+      }
+    } catch {/* silent */}
+  };
 
   const handleSettingsClose = () => {
     setSettingsOpen(false);
@@ -255,6 +364,7 @@ export default function Dashboard() {
         setActionMessage(`Evaluated ${data.evaluated}/${data.total} posts`);
         fetchPosts();
         fetchStats();
+        fetchKeywordMetrics();
       }
     } catch {
       setActionMessage('Evaluation failed');
@@ -277,6 +387,7 @@ export default function Dashboard() {
       setPipelineStep('');
       fetchPosts();
       fetchStats();
+      fetchKeywordMetrics();
     } catch {
       setPipelineStep('');
       setPipelineResult({
@@ -300,6 +411,7 @@ export default function Dashboard() {
 
   const totalPages = Math.ceil(total / 20);
   const isAnyActionRunning = scraping || evaluating || pipelineRunning;
+  const canAct = userRole === 'owner' || userRole === 'editor';
 
   const visiblePlatforms = PLATFORM_META.filter(
     (p) => enabledPlatforms.includes(p.id) || (stats.byPlatform[p.id] ?? 0) > 0
@@ -307,6 +419,12 @@ export default function Dashboard() {
 
   const accountsForPlatform = (platformId: string) =>
     socialAccounts.filter((a) => a.platform === platformId);
+
+  const trendIcon = (trend: string) => {
+    if (trend === 'rising') return <span className="text-green-500">&#9650;</span>;
+    if (trend === 'falling') return <span className="text-red-500">&#9660;</span>;
+    return <span className="text-gray-400">&#8212;</span>;
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -319,11 +437,66 @@ export default function Dashboard() {
               <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
               Live
             </span>
+            {/* Workspace Switcher */}
+            <div className="relative">
+              <button
+                onClick={() => setShowWorkspaceSwitcher(!showWorkspaceSwitcher)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 rounded-lg text-sm text-gray-700 hover:bg-gray-200 transition-colors"
+              >
+                <span className="font-medium truncate max-w-[160px]">
+                  {activeWorkspace?.name || 'Select Workspace'}
+                </span>
+                <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {showWorkspaceSwitcher && (
+                <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20">
+                  <div className="p-2 space-y-0.5">
+                    {workspaces.map((ws) => (
+                      <button
+                        key={ws._id}
+                        onClick={() => handleWorkspaceSwitch(ws._id)}
+                        className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+                          ws._id === activeWorkspace?._id
+                            ? 'bg-blue-50 text-blue-700 font-medium'
+                            : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {ws.name}
+                        <span className="text-xs text-gray-400 ml-2">
+                          {ws.members.length} member{ws.members.length !== 1 ? 's' : ''}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="border-t border-gray-100 p-2">
+                    <button
+                      onClick={handleCreateWorkspace}
+                      className="w-full text-left px-3 py-2 rounded-md text-sm text-blue-600 hover:bg-blue-50 font-medium"
+                    >
+                      + New Workspace
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            {userRole !== 'owner' && (
+              <span className="text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-600 font-medium">
+                {userRole}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             {session?.user && (
               <span className="text-sm text-gray-500">{session.user.name}</span>
             )}
+            <button
+              onClick={() => setShowActivity(!showActivity)}
+              className="px-3 py-2 bg-gray-100 text-gray-700 text-sm rounded-md hover:bg-gray-200"
+            >
+              Activity
+            </button>
             <button
               onClick={() => setSettingsOpen(true)}
               className="px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-md hover:bg-gray-200"
@@ -341,6 +514,46 @@ export default function Dashboard() {
       </header>
 
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+
+        {/* Activity Feed (collapsible) */}
+        {showActivity && (
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-base font-semibold text-gray-900">Recent Activity</h2>
+              <button onClick={() => setShowActivity(false)} className="text-gray-400 hover:text-gray-600 text-sm">
+                Hide
+              </button>
+            </div>
+            <ActivityFeed />
+          </div>
+        )}
+
+        {/* Competitor Opportunities Alert */}
+        {stats.competitorOpportunities > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">&#9888;</span>
+              <div>
+                <p className="font-semibold text-amber-800">
+                  {stats.competitorOpportunities} Competitor Opportunit{stats.competitorOpportunities === 1 ? 'y' : 'ies'}
+                </p>
+                <p className="text-sm text-amber-600">
+                  Posts where competitors are mentioned negatively — great time to engage.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => { setShowOpportunities(!showOpportunities); setPage(1); }}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                showOpportunities
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+              }`}
+            >
+              {showOpportunities ? 'Show All' : 'View'}
+            </button>
+          </div>
+        )}
 
         {/* Stats Bar */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
@@ -417,116 +630,188 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Run Full Pipeline */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-          <div className="flex items-start justify-between flex-wrap gap-4">
-            <div>
-              <h2 className="text-base font-semibold text-gray-900">Run Full Job</h2>
-              <p className="text-sm text-gray-500 mt-0.5">
-                Scrapes{' '}
-                {enabledPlatforms.length > 0
-                  ? enabledPlatforms.map((p) => PLATFORM_META.find((m) => m.id === p)?.label ?? p).join(', ')
-                  : 'all platforms'}
-                , then evaluates every new post in one click.
-              </p>
-            </div>
-            <button
-              onClick={handleRunPipeline}
-              disabled={isAnyActionRunning}
-              className="flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white text-sm font-semibold rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {pipelineRunning ? (
-                <>
-                  <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                  Running...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 3l14 9-14 9V3z" />
-                  </svg>
-                  Start Job
-                </>
-              )}
-            </button>
-          </div>
-
-          {pipelineStep && (
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <svg className="animate-spin w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-              {pipelineStep}
-            </div>
-          )}
-
-          {pipelineResult && !pipelineRunning && (
-            <div className={`rounded-lg p-4 text-sm space-y-1 ${
-              pipelineResult.errors.length ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'
-            }`}>
-              <p className={`font-semibold ${pipelineResult.errors.length ? 'text-red-700' : 'text-green-700'}`}>
-                Job complete
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
-                {[
-                  { label: 'Scraped',   value: pipelineResult.scraped },
-                  { label: 'New Posts', value: pipelineResult.newPosts },
-                  { label: 'Evaluated', value: pipelineResult.evaluated },
-                  { label: 'Skipped',   value: pipelineResult.skipped },
-                ].map(({ label, value }) => (
-                  <div key={label} className="bg-white/70 rounded p-2 text-center">
-                    <div className="text-lg font-bold text-gray-800">{value}</div>
-                    <div className="text-xs text-gray-500">{label}</div>
-                  </div>
-                ))}
-              </div>
-              {pipelineResult.errors.length > 0 && (
-                <ul className="mt-2 space-y-1">
-                  {pipelineResult.errors.map((e, i) => (
-                    <li key={i} className="text-red-600 text-xs">{e}</li>
+        {/* Keyword Performance */}
+        {keywordMetrics.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h2 className="text-base font-semibold text-gray-900 mb-3">Keyword Performance (14d)</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-gray-500 border-b border-gray-100">
+                    <th className="pb-2 font-medium">Keyword</th>
+                    <th className="pb-2 font-medium text-right">Posts</th>
+                    <th className="pb-2 font-medium text-right">Avg Score</th>
+                    <th className="pb-2 font-medium text-right">Trend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {keywordMetrics.slice(0, 10).map((m) => (
+                    <tr key={m.keyword} className="border-b border-gray-50">
+                      <td className="py-2 font-medium text-gray-800">{m.keyword}</td>
+                      <td className="py-2 text-right text-gray-600">{m.totalPosts}</td>
+                      <td className="py-2 text-right text-gray-600">{m.avgScore}</td>
+                      <td className="py-2 text-right">
+                        {trendIcon(m.trend)}
+                        <span className={`text-xs ml-1 ${
+                          m.trend === 'rising' ? 'text-green-600' :
+                          m.trend === 'falling' ? 'text-red-600' : 'text-gray-400'
+                        }`}>
+                          {m.trendPercent > 0 ? '+' : ''}{m.trendPercent}%
+                        </span>
+                      </td>
+                    </tr>
                   ))}
-                </ul>
-              )}
+                </tbody>
+              </table>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* A/B Tone Performance */}
+        {stats.tonePerformance.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h2 className="text-base font-semibold text-gray-900 mb-3">A/B Tone Performance</h2>
+            <div className="space-y-3">
+              {stats.tonePerformance.slice(0, 8).map((tp, i) => {
+                const maxScore = stats.tonePerformance[0]?.avgEngagementScore || 1;
+                const barWidth = (tp.avgEngagementScore / maxScore) * 100;
+                return (
+                  <div key={i} className="flex items-center gap-3">
+                    <span className="text-xs text-gray-500 w-16 text-right">{tp.platform}</span>
+                    <span className="text-xs font-medium text-gray-700 w-24">{tp.tone}</span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-4 relative">
+                      <div
+                        className="bg-blue-500 rounded-full h-4 transition-all"
+                        style={{ width: `${barWidth}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-600 w-12 text-right">
+                      {tp.avgEngagementScore.toFixed(1)}
+                    </span>
+                    <span className="text-xs text-gray-400 w-16 text-right">
+                      {tp.totalPosts} posts
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Run Full Pipeline */}
+        {canAct && (
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+            <div className="flex items-start justify-between flex-wrap gap-4">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Run Full Job</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Scrapes{' '}
+                  {enabledPlatforms.length > 0
+                    ? enabledPlatforms.map((p) => PLATFORM_META.find((m) => m.id === p)?.label ?? p).join(', ')
+                    : 'all platforms'}
+                  , then evaluates every new post in one click.
+                </p>
+              </div>
+              <button
+                onClick={handleRunPipeline}
+                disabled={isAnyActionRunning}
+                className="flex items-center gap-2 px-5 py-2.5 bg-gray-900 text-white text-sm font-semibold rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {pipelineRunning ? (
+                  <>
+                    <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    Running...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3l14 9-14 9V3z" />
+                    </svg>
+                    Start Job
+                  </>
+                )}
+              </button>
+            </div>
+
+            {pipelineStep && (
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <svg className="animate-spin w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                {pipelineStep}
+              </div>
+            )}
+
+            {pipelineResult && !pipelineRunning && (
+              <div className={`rounded-lg p-4 text-sm space-y-1 ${
+                pipelineResult.errors.length ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'
+              }`}>
+                <p className={`font-semibold ${pipelineResult.errors.length ? 'text-red-700' : 'text-green-700'}`}>
+                  Job complete
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                  {[
+                    { label: 'Scraped',   value: pipelineResult.scraped },
+                    { label: 'New Posts', value: pipelineResult.newPosts },
+                    { label: 'Evaluated', value: pipelineResult.evaluated },
+                    { label: 'Skipped',   value: pipelineResult.skipped },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="bg-white/70 rounded p-2 text-center">
+                      <div className="text-lg font-bold text-gray-800">{value}</div>
+                      <div className="text-xs text-gray-500">{label}</div>
+                    </div>
+                  ))}
+                </div>
+                {pipelineResult.errors.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {pipelineResult.errors.map((e, i) => (
+                      <li key={i} className="text-red-600 text-xs">{e}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Secondary Actions */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">Manual steps:</span>
-          <button
-            onClick={handleScrape}
-            disabled={isAnyActionRunning}
-            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
-          >
-            {scraping ? 'Scraping...' : 'Scrape Only'}
-          </button>
-          <button
-            onClick={handleEvaluate}
-            disabled={isAnyActionRunning}
-            className="px-4 py-2 bg-purple-600 text-white text-sm rounded-md hover:bg-purple-700 disabled:opacity-50"
-          >
-            {evaluating ? 'Evaluating...' : 'Evaluate Only'}
-          </button>
-          {actionMessage && (
-            <span className={`text-sm ${actionMessage.startsWith('Error') ? 'text-red-600' : 'text-green-600'}`}>
-              {actionMessage}
-            </span>
-          )}
-        </div>
+        {canAct && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-xs font-medium text-gray-400 uppercase tracking-wide">Manual steps:</span>
+            <button
+              onClick={handleScrape}
+              disabled={isAnyActionRunning}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              {scraping ? 'Scraping...' : 'Scrape Only'}
+            </button>
+            <button
+              onClick={handleEvaluate}
+              disabled={isAnyActionRunning}
+              className="px-4 py-2 bg-purple-600 text-white text-sm rounded-md hover:bg-purple-700 disabled:opacity-50"
+            >
+              {evaluating ? 'Evaluating...' : 'Evaluate Only'}
+            </button>
+            {actionMessage && (
+              <span className={`text-sm ${actionMessage.startsWith('Error') ? 'text-red-600' : 'text-green-600'}`}>
+                {actionMessage}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Status Filters */}
         <div className="flex gap-2 flex-wrap">
           {statusFilters.map(({ value, label }) => (
             <button
               key={value}
-              onClick={() => { setStatusFilter(value); setPage(1); }}
+              onClick={() => { setStatusFilter(value); setPage(1); setShowOpportunities(false); }}
               className={`px-3 py-1.5 text-sm rounded-md ${
-                statusFilter === value
+                statusFilter === value && !showOpportunities
                   ? 'bg-gray-900 text-white'
                   : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
               }`}
@@ -552,12 +837,15 @@ export default function Dashboard() {
             <div className="text-center py-12 text-gray-500 bg-white rounded-lg border border-gray-200">
               <p className="text-lg">No posts found</p>
               <p className="text-sm mt-1">
-                Configure your settings and click <strong>Start Job</strong> to begin.
+                {activeWorkspace
+                  ? <>Configure your settings and click <strong>Start Job</strong> to begin.</>
+                  : 'Select or create a workspace to get started.'
+                }
               </p>
             </div>
           ) : (
             posts.map((post) => (
-              <PostCard key={post._id} post={post} onUpdate={handlePostUpdate} />
+              <PostCard key={post._id} post={post} onUpdate={handlePostUpdate} role={userRole} />
             ))
           )}
         </div>
@@ -584,7 +872,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      <SettingsPanel open={settingsOpen} onClose={handleSettingsClose} />
+      <SettingsPanel open={settingsOpen} onClose={handleSettingsClose} workspaceId={activeWorkspace?._id} role={userRole} />
     </div>
   );
 }

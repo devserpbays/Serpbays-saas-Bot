@@ -69,7 +69,7 @@ export async function verifyYoutubeCookies(opts: VerifyOptions): Promise<Verific
     } catch {}
 
     const accountId = `yt_${username || 'unknown'}`;
-    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, displayName, verifiedAt: new Date().toISOString() }));
+    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, displayName, cookieMap, verifiedAt: new Date().toISOString() }));
 
     return { success: true, username, displayName, accountId, profileDir };
   } catch (err) {

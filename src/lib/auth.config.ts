@@ -19,7 +19,10 @@ export default {
       // API auth routes must always be accessible
       const isAuthRoute = pathname.startsWith('/api/auth');
 
-      if (isAuthRoute) return true;
+      // Invitation acceptance is public
+      const isInvitationRoute = pathname.startsWith('/api/invitations/accept');
+
+      if (isAuthRoute || isInvitationRoute) return true;
 
       // API routes return 401 JSON instead of redirect
       if (pathname.startsWith('/api/')) {
@@ -40,15 +43,25 @@ export default {
       // All other pages require auth
       return isLoggedIn;
     },
-    jwt({ token, user }) {
+    jwt({ token, user, trigger, session }) {
       if (user?.id) {
         token.id = user.id;
+      }
+      if (user?.activeWorkspaceId) {
+        token.activeWorkspaceId = user.activeWorkspaceId;
+      }
+      // Handle workspace switching via session update
+      if (trigger === 'update' && session?.activeWorkspaceId) {
+        token.activeWorkspaceId = session.activeWorkspaceId;
       }
       return token;
     },
     session({ session, token }) {
       if (token.id && session.user) {
         session.user.id = token.id as string;
+      }
+      if (token.activeWorkspaceId && session.user) {
+        session.user.activeWorkspaceId = token.activeWorkspaceId as string;
       }
       return session;
     },

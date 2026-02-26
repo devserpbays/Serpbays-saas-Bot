@@ -53,7 +53,7 @@ export async function verifyQuoraCookies(opts: VerifyOptions): Promise<Verificat
     } catch {}
 
     const accountId = `qa_${username || 'unknown'}`;
-    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, verifiedAt: new Date().toISOString() }));
+    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, cookieMap, verifiedAt: new Date().toISOString() }));
 
     return { success: true, username, displayName: username, accountId, profileDir };
   } catch (err) {

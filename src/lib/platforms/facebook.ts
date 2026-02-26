@@ -57,7 +57,7 @@ export async function verifyFacebookCookies(opts: VerifyOptions): Promise<Verifi
     } catch {}
 
     const accountId = `fb_${cUser}`;
-    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, displayName, cUser, verifiedAt: new Date().toISOString() }));
+    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, displayName, cUser, cookieMap, verifiedAt: new Date().toISOString() }));
 
     return { success: true, username: username || cUser, displayName, accountId, profileDir };
   } catch (err) {

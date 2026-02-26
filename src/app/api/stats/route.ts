@@ -1,19 +1,20 @@
 import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import Post from '@/models/Post';
-import { getApiUserId } from '@/lib/apiAuth';
+import TonePerformance from '@/models/TonePerformance';
+import { getApiContext } from '@/lib/apiAuth';
 
 export async function GET() {
-  const userId = await getApiUserId();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await getApiContext();
+  if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   await connectDB();
 
   const statuses = ['new', 'evaluating', 'evaluated', 'approved', 'rejected', 'posted'] as const;
 
   const [total, ...counts] = await Promise.all([
-    Post.countDocuments({ userId }),
-    ...statuses.map(s => Post.countDocuments({ userId, status: s })),
+    Post.countDocuments({ workspaceId: ctx.workspaceId }),
+    ...statuses.map(s => Post.countDocuments({ workspaceId: ctx.workspaceId, status: s })),
   ]);
 
   const byStatus: Record<string, number> = {};
@@ -21,8 +22,8 @@ export async function GET() {
 
   const platforms = ['facebook', 'twitter', 'reddit', 'quora', 'youtube', 'pinterest'] as const;
   const platformCounts = await Promise.all([
-    ...platforms.map(p => Post.countDocuments({ userId, platform: p })),
-    ...platforms.map(p => Post.countDocuments({ userId, platform: p, status: 'posted' })),
+    ...platforms.map(p => Post.countDocuments({ workspaceId: ctx.workspaceId, platform: p })),
+    ...platforms.map(p => Post.countDocuments({ workspaceId: ctx.workspaceId, platform: p, status: 'posted' })),
   ]);
 
   const byPlatform: Record<string, number> = {};
@@ -32,10 +33,24 @@ export async function GET() {
     postedByPlatform[p] = platformCounts[platforms.length + i];
   });
 
+  // Competitor opportunities count
+  const competitorOpportunities = await Post.countDocuments({
+    workspaceId: ctx.workspaceId,
+    isCompetitorOpportunity: true,
+    status: { $nin: ['approved', 'posted'] },
+  });
+
+  // Tone performance
+  const tonePerformance = await TonePerformance.find({ userId: ctx.userId })
+    .sort({ avgEngagementScore: -1 })
+    .lean();
+
   return NextResponse.json({
     total,
     byStatus,
     byPlatform,
     postedByPlatform,
+    competitorOpportunities,
+    tonePerformance,
   });
 }

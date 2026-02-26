@@ -1,24 +1,37 @@
 'use client';
 
 import { useState } from 'react';
-import type { IPost } from '@/lib/types';
+import type { IPost, WorkspaceRole, ReplyVariation } from '@/lib/types';
 import StatusBadge from './StatusBadge';
 
 interface PostCardProps {
   post: IPost;
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
+  role?: WorkspaceRole;
 }
 
-export default function PostCard({ post, onUpdate }: PostCardProps) {
+export default function PostCard({ post, onUpdate, role = 'owner' }: PostCardProps) {
   const [editedReply, setEditedReply] = useState(post.editedReply || post.aiReply || '');
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [posting, setPosting] = useState(false);
   const [postResult, setPostResult] = useState<string>('');
+  const [selectedVariation, setSelectedVariation] = useState(
+    post.selectedVariationIndex ?? (post.aiReplies && post.aiReplies.length > 0 ? 0 : -1)
+  );
+
+  const canAct = role === 'owner' || role === 'editor';
+  const variations = (post.aiReplies || []) as ReplyVariation[];
+  const hasVariations = variations.length > 1;
 
   const handleAction = async (status: string) => {
     setLoading(true);
-    await onUpdate(post._id!, { status, editedReply: editedReply !== post.aiReply ? editedReply : undefined });
+    const data: Record<string, unknown> = { status };
+    if (editedReply !== post.aiReply) data.editedReply = editedReply;
+    if (hasVariations && selectedVariation >= 0) {
+      data.selectedVariationIndex = selectedVariation;
+    }
+    await onUpdate(post._id!, data);
     setLoading(false);
   };
 
@@ -44,13 +57,21 @@ export default function PostCard({ post, onUpdate }: PostCardProps) {
     setPosting(false);
   };
 
-  const replyText = post.editedReply || post.aiReply;
+  const replyText = hasVariations && selectedVariation >= 0
+    ? variations[selectedVariation].text
+    : post.editedReply || post.aiReply;
+
+  const competitorSentimentColor = {
+    negative: 'bg-amber-100 text-amber-700 border-amber-200',
+    positive: 'bg-blue-100 text-blue-700 border-blue-200',
+    neutral: 'bg-gray-100 text-gray-600 border-gray-200',
+  };
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 space-y-4">
       <div className="flex items-start justify-between">
         <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="font-semibold text-gray-900">{post.author}</span>
             <StatusBadge status={post.status} />
             {post.aiRelevanceScore !== undefined && (
@@ -64,6 +85,21 @@ export default function PostCard({ post, onUpdate }: PostCardProps) {
             )}
             {post.aiTone && (
               <span className="text-xs text-gray-500">Tone: {post.aiTone}</span>
+            )}
+            {/* Competitor badge */}
+            {post.competitorMentioned && (
+              <span className={`text-xs font-medium px-2 py-0.5 rounded border ${
+                competitorSentimentColor[post.competitorSentiment as keyof typeof competitorSentimentColor] || competitorSentimentColor.neutral
+              }`}>
+                {post.competitorMentioned}
+                {post.competitorSentiment && ` (${post.competitorSentiment})`}
+              </span>
+            )}
+            {/* Opportunity pill */}
+            {post.isCompetitorOpportunity && (
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-amber-500 text-white">
+                Opportunity
+              </span>
             )}
           </div>
           <p className="text-sm text-gray-500">
@@ -98,7 +134,43 @@ export default function PostCard({ post, onUpdate }: PostCardProps) {
         <p className="text-xs text-gray-500 italic">AI Reasoning: {post.aiReasoning}</p>
       )}
 
-      {replyText && (
+      {/* A/B Testing: Variation Selector */}
+      {hasVariations && post.status !== 'posted' && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-700">Reply Variations:</label>
+          <div className="grid gap-2">
+            {variations.map((v, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  setSelectedVariation(i);
+                  setEditedReply(v.text);
+                }}
+                className={`text-left rounded-lg p-3 border-2 transition-colors ${
+                  selectedVariation === i
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                    selectedVariation === i ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {v.tone}
+                  </span>
+                  {selectedVariation === i && (
+                    <span className="text-xs text-blue-600 font-medium">Selected</span>
+                  )}
+                </div>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">{v.text}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Single reply display (backward compat) */}
+      {!hasVariations && replyText && (
         <div className="space-y-2">
           <label className="text-sm font-medium text-gray-700">
             {post.status === 'posted' ? 'Posted Reply:' : 'Suggested Reply:'}
@@ -116,6 +188,7 @@ export default function PostCard({ post, onUpdate }: PostCardProps) {
               {post.status === 'posted' && post.postedAt && (
                 <p className="text-xs text-indigo-400 mt-1.5">
                   Posted {new Date(post.postedAt).toLocaleString()}
+                  {post.postedTone && ` (${post.postedTone} tone)`}
                 </p>
               )}
             </div>
@@ -123,7 +196,27 @@ export default function PostCard({ post, onUpdate }: PostCardProps) {
         </div>
       )}
 
-      {(post.status === 'evaluated' || post.status === 'new') && (
+      {/* Posted variations display */}
+      {hasVariations && post.status === 'posted' && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-gray-700">Posted Reply:</label>
+          <div className="bg-indigo-50 border border-indigo-200 rounded-md p-3">
+            <p className="text-sm text-gray-800 whitespace-pre-wrap">
+              {post.selectedVariationIndex !== undefined && post.selectedVariationIndex >= 0
+                ? variations[post.selectedVariationIndex]?.text || post.aiReply
+                : post.aiReply}
+            </p>
+            {post.postedAt && (
+              <p className="text-xs text-indigo-400 mt-1.5">
+                Posted {new Date(post.postedAt).toLocaleString()}
+                {post.postedTone && ` (${post.postedTone} tone)`}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {canAct && (post.status === 'evaluated' || post.status === 'new') && (
         <div className="flex gap-2 pt-2">
           <button
             onClick={() => handleAction('approved')}
@@ -148,7 +241,7 @@ export default function PostCard({ post, onUpdate }: PostCardProps) {
         </div>
       )}
 
-      {post.status === 'approved' && (
+      {canAct && post.status === 'approved' && (
         <div className="flex gap-2 pt-2 flex-wrap items-center">
           {post.platform === 'twitter' && (
             <button

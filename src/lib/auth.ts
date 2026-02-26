@@ -28,6 +28,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           id: user._id.toString(),
           email: user.email,
           name: user.name,
+          activeWorkspaceId: user.activeWorkspaceId?.toString() || '',
         };
       },
     }),
