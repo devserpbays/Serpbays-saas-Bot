@@ -3,6 +3,12 @@
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { Zap } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -19,7 +25,6 @@ export default function SignUpPage() {
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
 
-    // Register
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -33,7 +38,6 @@ export default function SignUpPage() {
       return;
     }
 
-    // Auto sign-in after registration
     const result = await signIn('credentials', {
       email,
       password,
@@ -49,76 +53,51 @@ export default function SignUpPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950">
-      <div className="w-full max-w-sm space-y-6 rounded-lg border border-zinc-200 bg-white p-8 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">Create Account</h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Serpbays SaaS</p>
-        </div>
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="text-center space-y-2">
+          <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <Zap className="h-5 w-5" />
+          </div>
+          <CardTitle className="text-2xl">Create Account</CardTitle>
+          <CardDescription>Serpbays SaaS</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
-              {error}
+            <div className="space-y-2">
+              <Label htmlFor="name">Name</Label>
+              <Input id="name" name="name" type="text" required placeholder="Your name" />
             </div>
-          )}
 
-          <div>
-            <label htmlFor="name" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Name
-            </label>
-            <input
-              id="name"
-              name="name"
-              type="text"
-              required
-              className="mt-1 block w-full rounded-md border border-zinc-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-            />
-          </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" name="email" type="email" required placeholder="you@example.com" />
+            </div>
 
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Email
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              required
-              className="mt-1 block w-full rounded-md border border-zinc-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-            />
-          </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input id="password" name="password" type="password" required minLength={6} />
+            </div>
 
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Password
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              minLength={6}
-              className="mt-1 block w-full rounded-md border border-zinc-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-            />
-          </div>
+            <Button type="submit" disabled={loading} className="w-full">
+              {loading ? 'Creating account...' : 'Sign Up'}
+            </Button>
+          </form>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-          >
-            {loading ? 'Creating account...' : 'Sign Up'}
-          </button>
-        </form>
-
-        <p className="text-center text-sm text-zinc-500 dark:text-zinc-400">
-          Already have an account?{' '}
-          <a href="/sign-in" className="font-medium text-blue-600 hover:text-blue-500">
-            Sign in
-          </a>
-        </p>
-      </div>
+          <p className="text-center text-sm text-muted-foreground mt-4">
+            Already have an account?{' '}
+            <a href="/sign-in" className="font-medium text-primary hover:underline">
+              Sign in
+            </a>
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
