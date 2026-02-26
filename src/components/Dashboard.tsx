@@ -427,14 +427,14 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50/80">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
+        <div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold text-gray-900">Serpbays</h1>
-            <span className="flex items-center gap-1.5 text-xs text-gray-400">
-              <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight">Serpbays</h1>
+            <span className="flex items-center gap-1.5 text-[10px] font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full ring-1 ring-green-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
               Live
             </span>
             {/* Workspace Switcher */}
@@ -487,27 +487,38 @@ export default function Dashboard() {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {session?.user && (
-              <span className="text-sm text-gray-500">{session.user.name}</span>
+              <span className="text-sm text-gray-500 mr-1 hidden sm:inline">{session.user.name}</span>
             )}
             <button
               onClick={() => setShowActivity(!showActivity)}
-              className="px-3 py-2 bg-gray-100 text-gray-700 text-sm rounded-md hover:bg-gray-200"
+              className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 ${
+                showActivity ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
             >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
               Activity
             </button>
             <button
               onClick={() => setSettingsOpen(true)}
-              className="px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-md hover:bg-gray-200"
+              className="px-3 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1.5"
             >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+              </svg>
               Settings
             </button>
             <button
               onClick={() => signOut({ callbackUrl: '/sign-in' })}
-              className="px-4 py-2 text-gray-500 text-sm rounded-md hover:bg-gray-100"
+              className="px-3 py-2 text-gray-400 text-sm rounded-lg hover:bg-gray-100 hover:text-gray-600 transition-colors"
             >
-              Sign Out
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
+              </svg>
             </button>
           </div>
         </div>
@@ -558,17 +569,20 @@ export default function Dashboard() {
         {/* Stats Bar */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
           {[
-            { label: 'Total',      value: stats.total,      color: 'bg-gray-100 text-gray-800' },
-            { label: 'New',        value: stats.new,         color: 'bg-blue-100 text-blue-800' },
-            { label: 'Evaluating', value: stats.evaluating,  color: 'bg-yellow-100 text-yellow-800' },
-            { label: 'Evaluated',  value: stats.evaluated,   color: 'bg-purple-100 text-purple-800' },
-            { label: 'Approved',   value: stats.approved,    color: 'bg-green-100 text-green-800' },
-            { label: 'Rejected',   value: stats.rejected,    color: 'bg-red-100 text-red-800' },
-            { label: 'Posted',     value: stats.posted,      color: 'bg-gray-100 text-gray-600' },
-          ].map(({ label, value, color }) => (
-            <div key={label} className={`${color} rounded-lg p-3 text-center`}>
-              <div className="text-2xl font-bold">{value}</div>
-              <div className="text-xs font-medium">{label}</div>
+            { label: 'Total',      value: stats.total,      color: 'bg-white border border-gray-200 text-gray-800', dot: 'bg-gray-400' },
+            { label: 'New',        value: stats.new,         color: 'bg-blue-50 border border-blue-200 text-blue-800', dot: 'bg-blue-500' },
+            { label: 'Evaluating', value: stats.evaluating,  color: 'bg-yellow-50 border border-yellow-200 text-yellow-800', dot: 'bg-yellow-500' },
+            { label: 'Evaluated',  value: stats.evaluated,   color: 'bg-purple-50 border border-purple-200 text-purple-800', dot: 'bg-purple-500' },
+            { label: 'Approved',   value: stats.approved,    color: 'bg-green-50 border border-green-200 text-green-800', dot: 'bg-green-500' },
+            { label: 'Rejected',   value: stats.rejected,    color: 'bg-red-50 border border-red-200 text-red-800', dot: 'bg-red-500' },
+            { label: 'Posted',     value: stats.posted,      color: 'bg-emerald-50 border border-emerald-200 text-emerald-800', dot: 'bg-emerald-500' },
+          ].map(({ label, value, color, dot }) => (
+            <div key={label} className={`${color} rounded-xl p-3 text-center shadow-sm`}>
+              <div className="text-2xl font-bold tracking-tight">{value}</div>
+              <div className="text-xs font-semibold flex items-center justify-center gap-1.5 mt-0.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+                {label}
+              </div>
             </div>
           ))}
         </div>
@@ -632,8 +646,13 @@ export default function Dashboard() {
 
         {/* Keyword Performance */}
         {keywordMetrics.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <h2 className="text-base font-semibold text-gray-900 mb-3">Keyword Performance (14d)</h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <svg className="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5" />
+              </svg>
+              Keyword Performance (14d)
+            </h2>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -669,8 +688,13 @@ export default function Dashboard() {
 
         {/* A/B Tone Performance */}
         {stats.tonePerformance.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <h2 className="text-base font-semibold text-gray-900 mb-3">A/B Tone Performance</h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+            <h2 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <svg className="w-4 h-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.3 24.3 0 0 1 4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0 1 12 15a9.065 9.065 0 0 0-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0 1 12 21a48.25 48.25 0 0 1-8.135-.687c-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+              </svg>
+              A/B Tone Performance
+            </h2>
             <div className="space-y-3">
               {stats.tonePerformance.slice(0, 8).map((tp, i) => {
                 const maxScore = stats.tonePerformance[0]?.avgEngagementScore || 1;
@@ -700,10 +724,15 @@ export default function Dashboard() {
 
         {/* Run Full Pipeline */}
         {canAct && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4 shadow-sm">
             <div className="flex items-start justify-between flex-wrap gap-4">
               <div>
-                <h2 className="text-base font-semibold text-gray-900">Run Full Job</h2>
+                <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
+                  </svg>
+                  Run Full Job
+                </h2>
                 <p className="text-sm text-gray-500 mt-0.5">
                   Scrapes{' '}
                   {enabledPlatforms.length > 0
@@ -834,11 +863,14 @@ export default function Dashboard() {
         {/* Posts */}
         <div className="space-y-4">
           {posts.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 bg-white rounded-lg border border-gray-200">
-              <p className="text-lg">No posts found</p>
-              <p className="text-sm mt-1">
+            <div className="text-center py-16 bg-white rounded-xl border border-gray-200 shadow-sm">
+              <svg className="w-12 h-12 text-gray-300 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+              </svg>
+              <p className="text-lg font-semibold text-gray-700">No posts found</p>
+              <p className="text-sm text-gray-400 mt-1 max-w-sm mx-auto">
                 {activeWorkspace
-                  ? <>Configure your settings and click <strong>Start Job</strong> to begin.</>
+                  ? <>Configure your settings and click <strong className="text-gray-600">Start Job</strong> to begin scraping and evaluating posts.</>
                   : 'Select or create a workspace to get started.'
                 }
               </p>
@@ -852,21 +884,31 @@ export default function Dashboard() {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 pt-4">
+          <div className="flex items-center justify-center gap-3 pt-4 pb-2">
             <button
               onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page === 1}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm flex items-center gap-1"
             >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+              </svg>
               Previous
             </button>
-            <span className="text-sm text-gray-600">Page {page} of {totalPages}</span>
+            <div className="flex items-center gap-1">
+              <span className="text-sm font-semibold text-gray-800">{page}</span>
+              <span className="text-sm text-gray-400">/</span>
+              <span className="text-sm text-gray-500">{totalPages}</span>
+            </div>
             <button
               onClick={() => setPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium border border-gray-200 rounded-lg bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm flex items-center gap-1"
             >
               Next
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+              </svg>
             </button>
           </div>
         )}
