@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import type { VerifyOptions, VerificationResult, ScrapeContext, ScrapedPost } from './types';
+import type { VerifyOptions, VerificationResult, ScrapeContext, ScrapedPost, PostReplyContext, PostReplyResult } from './types';
 import { BROWSER_ARGS, DEFAULT_USER_AGENT, NAVIGATION_TIMEOUT } from './types';
 
 export async function verifyRedditCookies(opts: VerifyOptions): Promise<VerificationResult> {
@@ -135,4 +135,91 @@ export async function scrapeReddit(ctx: ScrapeContext): Promise<ScrapedPost[]> {
   }
 
   return posts;
+}
+
+/**
+ * Post a comment reply to a Reddit post using Playwright browser automation.
+ * Navigates to the post, finds the comment box, types the reply, and submits.
+ */
+export async function postRedditReply(ctx: PostReplyContext): Promise<PostReplyResult> {
+  const { postUrl, replyText, cookieList, profileDir } = ctx;
+
+  mkdirSync(profileDir, { recursive: true });
+  try { unlinkSync(join(profileDir, 'SingletonLock')); } catch {}
+
+  const context = await chromium.launchPersistentContext(profileDir, {
+    headless: true,
+    args: BROWSER_ARGS,
+    userAgent: DEFAULT_USER_AGENT,
+    viewport: { width: 1280, height: 900 },
+    locale: 'en-US',
+  });
+
+  try {
+    await context.addCookies(cookieList);
+    const page = context.pages()[0] || await context.newPage();
+
+    // Navigate to the post on old.reddit.com for simpler DOM
+    const oldRedditUrl = postUrl.replace('www.reddit.com', 'old.reddit.com');
+    await page.goto(oldRedditUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+    await page.waitForTimeout(3000);
+
+    // Check if logged in
+    const loginLink = await page.$('a.login-required');
+    const userBar = await page.$('span.user a[href*="/user/"]');
+    if (loginLink && !userBar) {
+      return { success: false, error: 'Not logged in on Reddit. Please re-verify your cookies.' };
+    }
+
+    // Find the comment textarea on old reddit
+    const commentBox = await page.$('textarea[name="text"]');
+    if (!commentBox) {
+      return { success: false, error: 'Could not find comment box. The post may be locked or archived.' };
+    }
+
+    await commentBox.click();
+    await commentBox.fill(replyText);
+    await page.waitForTimeout(500);
+
+    // Click the save/submit button
+    const submitBtn = await page.$('button[type="submit"].save, button:has-text("save"), input[type="submit"][value="save"]');
+    if (!submitBtn) {
+      return { success: false, error: 'Could not find submit button for comment.' };
+    }
+
+    await submitBtn.click();
+    await page.waitForTimeout(4000);
+
+    // Check for errors
+    const errorEl = await page.$('.error, .status-error');
+    if (errorEl) {
+      const errorText = (await errorEl.textContent())?.trim() || '';
+      if (errorText) {
+        return { success: false, error: `Reddit error: ${errorText}` };
+      }
+    }
+
+    // Try to extract the comment permalink
+    let replyUrl = '';
+    try {
+      // On old reddit, new comments appear with a permalink
+      const permalinks = await page.$$('.comment .bylink[href*="/comment/"], .comment a.bylink');
+      if (permalinks.length > 0) {
+        const lastPermalink = permalinks[permalinks.length - 1];
+        const href = await lastPermalink.getAttribute('href');
+        if (href) {
+          replyUrl = href.startsWith('http') ? href : `https://old.reddit.com${href}`;
+        }
+      }
+    } catch {}
+
+    // Fallback: use the post URL itself
+    if (!replyUrl) replyUrl = postUrl;
+
+    return { success: true, replyUrl };
+  } catch (err) {
+    return { success: false, error: `Failed to post Reddit comment: ${err instanceof Error ? err.message : String(err)}` };
+  } finally {
+    await context.close();
+  }
 }

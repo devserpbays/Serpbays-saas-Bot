@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import type { VerifyOptions, VerificationResult, ScrapeContext, ScrapedPost } from './types';
+import type { VerifyOptions, VerificationResult, ScrapeContext, ScrapedPost, PostReplyContext, PostReplyResult } from './types';
 import { BROWSER_ARGS, DEFAULT_USER_AGENT, NAVIGATION_TIMEOUT } from './types';
 
 const TWITTER_BEARER =
@@ -145,4 +145,64 @@ export async function scrapeTwitter(ctx: ScrapeContext): Promise<ScrapedPost[]> 
   }
 
   return posts;
+}
+
+/**
+ * Post a reply to a tweet using Twitter's v1.1 API.
+ * Extracts the tweet ID from the post URL and sends a reply.
+ */
+export async function postTwitterReply(ctx: PostReplyContext): Promise<PostReplyResult> {
+  const { postUrl, replyText, cookieMap } = ctx;
+
+  if (!cookieMap['auth_token'] || !cookieMap['ct0']) {
+    return { success: false, error: 'Missing required cookies: auth_token, ct0' };
+  }
+
+  // Extract tweet ID from URL: https://x.com/{user}/status/{tweetId}
+  const tweetIdMatch = postUrl.match(/\/status\/(\d+)/);
+  if (!tweetIdMatch) {
+    return { success: false, error: 'Could not extract tweet ID from URL' };
+  }
+  const tweetId = tweetIdMatch[1];
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${TWITTER_BEARER}`,
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'X-Csrf-Token': cookieMap['ct0'],
+    'X-Twitter-Auth-Type': 'OAuth2Session',
+    'X-Twitter-Active-User': 'yes',
+    'X-Twitter-Client-Language': 'en',
+    Cookie: `auth_token=${cookieMap['auth_token']}; ct0=${cookieMap['ct0']}`,
+    'User-Agent': DEFAULT_USER_AGENT,
+  };
+
+  try {
+    const body = new URLSearchParams({
+      status: replyText,
+      in_reply_to_status_id: tweetId,
+      auto_populate_reply_metadata: 'true',
+    });
+
+    const res = await fetch('https://x.com/i/api/1.1/statuses/update.json', {
+      method: 'POST',
+      headers,
+      body: body.toString(),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => '');
+      return { success: false, error: `Twitter API error ${res.status}: ${errorText.slice(0, 200)}` };
+    }
+
+    const data = await res.json();
+    const replyId = data.id_str;
+    const screenName = data.user?.screen_name || 'unknown';
+    const replyUrl = replyId
+      ? `https://x.com/${screenName}/status/${replyId}`
+      : '';
+
+    return { success: true, replyUrl };
+  } catch (err) {
+    return { success: false, error: `Failed to post tweet: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }

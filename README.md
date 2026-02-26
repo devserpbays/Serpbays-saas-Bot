@@ -32,15 +32,22 @@ Scrape -> Evaluate -> Review -> Approve/Reject -> Post -> Track
 - Email/password registration and sign-in
 - JWT-based stateless sessions (NextAuth v5)
 - Edge-safe middleware for route protection
-- Full data isolation per user — every post, setting, and account is scoped to the authenticated user
-- Compound unique index on `(userId, url)` so multiple users can independently track the same content
+- Workspace-scoped data isolation — every post, setting, and account is scoped to a workspace
+- Role-based access control: `owner`, `editor`, `reviewer` per workspace
+- Compound unique index on `(workspaceId, url)` so multiple workspaces can independently track the same content
+- Auto-creates default workspace + settings on user registration
 
 ### Dashboard
+- Workspace switcher dropdown with inline workspace creation
 - Real-time stats bar showing counts for each pipeline stage (New, Evaluating, Evaluated, Approved, Rejected, Posted)
 - Per-platform breakdown with post counts and posted badges
 - Connected social account avatars displayed per platform
+- Competitor opportunities alert card with count badge
+- Keyword performance table with trend arrows
+- A/B tone performance horizontal bars
+- Activity feed toggle showing team actions
 - Auto-polling every 10 seconds for live data updates
-- Status filter tabs (All / New / Evaluated / Approved / Rejected / Posted)
+- Status filter tabs (All / New / Evaluated / Approved / Rejected / Posted) + Opportunities filter
 - Platform filter buttons
 - Paginated post list (20 per page)
 - One-click pipeline controls:
@@ -54,10 +61,14 @@ Scrape -> Evaluate -> Review -> Approve/Reject -> Post -> Track
 - Color-coded AI relevance score (green >= 70, yellow >= 40, red < 40)
 - AI tone analysis and reasoning
 - Matched keywords displayed as tags
+- Competitor mention badges with sentiment color-coding (positive/negative/neutral)
+- Competitor opportunity pill for high-score opportunities
+- A/B variation selector with selectable tone cards
 - AI-suggested reply with inline editing before approval
 - Per-status action buttons:
   - `evaluated` / `new`: Approve, Edit Reply, Reject
   - `approved`: Platform-specific "Post to X/Facebook/Reddit/..." buttons, Copy Reply, Mark as Posted
+- Role-aware rendering (reviewers see read-only views)
 - Posted reply display with engagement tracking
 
 ### Settings Panel
@@ -69,6 +80,10 @@ Scrape -> Evaluate -> Review -> Approve/Reject -> Post -> Track
 - **Custom Prompt Template** — define your own AI prompt with variables: `{postContent}`, `{companyName}`, `{companyDescription}`
 - **Per-Platform Advanced Config** — daily posting limits, auto-post score thresholds, platform-specific keywords
 - **Platform Scheduling** — per-platform cron schedules with timezone, active days, and posting time windows
+- **Team Management** — member list with role display, invite form (email + role), role-based input restrictions
+- **Competitors** — chip-based competitor input with name/URL/description
+- **Keyword Discovery** — one-click AI keyword suggestions, add/skip chips for suggested keywords
+- **A/B Testing** — enable toggle, variation count slider (2–5), tone presets as tags, auto-optimize checkbox
 
 ### Cookie Verification & Account Connection (Phase 1)
 - Multi-format cookie parsing: JSON array (Cookie Editor extension), `key=value` string, flat object
@@ -99,6 +114,58 @@ Scrape -> Evaluate -> Review -> Approve/Reject -> Post -> Track
 - Robust response parsing (direct JSON, markdown code blocks, embedded JSON)
 - Batch evaluation with `evaluating` status indicator for UI progress
 - Failed evaluations revert to `new` for automatic retry
+- Multi-variation generation for A/B testing (configurable 2–5 variations per post)
+- Competitor mention detection with sentiment analysis and opportunity scoring
+- Tone hints from historical performance for auto-optimize mode
+
+### Multi-Brand Workspaces
+- Create and manage multiple workspaces (brands)
+- Switch between workspaces via dashboard dropdown
+- All data (posts, settings, accounts) scoped per workspace
+- Default workspace auto-created on registration
+- Slug-based workspace identification
+
+### Team Collaboration
+- Invite team members via email with role assignment (owner / editor / reviewer)
+- Token-based invitation acceptance flow
+- Role-based access control on all API routes
+- Activity feed logging all team actions (approvals, rejections, edits, posts, settings changes)
+- Pending invitation auto-detection on new user registration
+
+### Competitor Intelligence
+- Track competitors by name, URL, and description
+- AI detects competitor mentions during post evaluation
+- Sentiment analysis (positive / negative / neutral) per mention
+- Opportunity scoring for competitor-related posts
+- Competitor stats aggregation API with sentiment breakdowns
+- Alert threshold configuration for high-opportunity posts
+
+### Keyword Discovery & Trending
+- AI-powered keyword suggestions based on company profile and existing keywords
+- Related keyword expansion via `/api/keyword-related`
+- Keyword performance metrics: posts found, high-relevance count, average score
+- Per-platform keyword breakdown stored in `KeywordMetric` model
+- Trend visualization with directional arrows in dashboard
+
+### A/B Testing for Replies
+- Generate multiple reply variations per post with different tones
+- Selectable variation cards in PostCard UI
+- Tone performance tracking across platforms (likes, replies, engagement score)
+- Auto-optimize mode: AI uses historical tone performance to weight future variations
+- Configurable tone presets (e.g. helpful, professional, witty)
+- Per-platform tone performance stored in `TonePerformance` model
+
+### Platform Posting (Phase 3)
+- Post AI-generated replies back to all 6 platforms from the dashboard
+- Shared posting infrastructure: validates post status, resolves reply text (edited > A/B variation > AI), loads cookies, updates post record and activity log
+- **Twitter/X** — API-based posting via `statuses/update.json` with `in_reply_to_status_id`
+- **Reddit** — Playwright DOM automation on old.reddit.com (textarea + submit)
+- **Facebook** — Playwright DOM automation (contenteditable comment box + Enter to submit)
+- **Quora** — Playwright DOM automation (Answer button → editor → Post button)
+- **YouTube** — Playwright DOM automation (scroll to comments → placeholder → editor → submit)
+- **Pinterest** — API-based posting via `PinCommentResource/create/` with CSRF token
+- Posts updated to `posted` status with `replyUrl`, `postedAt`, `postedByAccount`, `postedTone`
+- Activity logging for all posted replies
 
 ### Engagement Tracking
 - Track likes and replies on bot-posted replies
@@ -107,10 +174,11 @@ Scrape -> Evaluate -> Review -> Approve/Reject -> Post -> Track
 - Configurable monitoring duration per conversation thread
 
 ### Browser Profile System
-- Persistent browser profiles per user per platform (`profiles/{userId}/{platform}/`)
+- Persistent browser profiles per workspace per platform (`profiles/{workspaceId}/{platform}/`)
 - Cookie-based authentication for headless browser automation
-- Isolated browser state across users and platforms
-- Multi-account support: `profiles/{userId}/{platform}-{index}/` for additional accounts
+- Isolated browser state across workspaces and platforms
+- Multi-account support: `profiles/{workspaceId}/{platform}-{index}/` for additional accounts
+- Legacy userId-based path fallback for backward compatibility
 
 ## Tech Stack
 
@@ -138,11 +206,11 @@ src/
     sign-up/page.tsx                  # Registration form
     api/
       auth/[...nextauth]/route.ts     # NextAuth handler
-      auth/register/route.ts          # User registration
+      auth/register/route.ts          # User registration + workspace setup
       posts/route.ts                  # GET (list/filter) + PATCH (update) posts
-      settings/route.ts               # GET + PUT user settings
+      settings/route.ts               # GET + PUT workspace settings
       social-accounts/route.ts        # GET + POST + DELETE social accounts
-      stats/route.ts                  # Aggregated status/platform counts
+      stats/route.ts                  # Aggregated status/platform/competitor counts
       scrape/route.ts                 # Trigger scraping job
       evaluate/route.ts               # Trigger AI evaluation
       run-pipeline/route.ts           # Full scrape + evaluate pipeline
@@ -152,53 +220,83 @@ src/
       set-quora-cookies/route.ts      # Verify & store Quora cookies
       set-youtube-cookies/route.ts    # Verify & store YouTube cookies
       set-pinterest-cookies/route.ts  # Verify & store Pinterest cookies
+      post-reply/route.ts             # Post reply to Twitter/X
+      fb-post-reply/route.ts          # Post reply to Facebook
+      rd-post-reply/route.ts          # Post reply to Reddit
+      qa-post-reply/route.ts          # Post reply to Quora
+      yt-post-reply/route.ts          # Post reply to YouTube
+      pin-post-reply/route.ts         # Post reply to Pinterest
+      workspaces/route.ts             # GET + POST workspaces
+      workspaces/[id]/route.ts        # PATCH + DELETE workspace
+      workspaces/[id]/invite/route.ts # POST invite member
+      workspaces/[id]/members/route.ts # GET + PATCH + DELETE members
+      workspaces/switch/route.ts      # POST switch active workspace
+      invitations/accept/route.ts     # POST accept invitation
+      activity/route.ts               # GET activity feed
+      competitor-stats/route.ts       # GET competitor intelligence stats
+      keyword-suggestions/route.ts    # POST AI keyword suggestions
+      keyword-related/route.ts        # POST related keyword expansion
+      keyword-metrics/route.ts        # GET keyword performance metrics
+      ab-stats/route.ts               # GET A/B tone performance stats
+      update-engagement/route.ts      # POST update engagement metrics
   components/
-    Dashboard.tsx                     # Main dashboard UI
-    SettingsPanel.tsx                 # Settings slide-out drawer
-    PostCard.tsx                      # Post card with actions
+    Dashboard.tsx                     # Main dashboard UI + workspace switcher
+    SettingsPanel.tsx                 # Settings drawer + team/competitor/AB sections
+    PostCard.tsx                      # Post card with A/B variations + posting
+    ActivityFeed.tsx                  # Team activity feed component
     StatusBadge.tsx                   # Colored status pill
     Providers.tsx                     # NextAuth SessionProvider wrapper
   lib/
     auth.ts                           # Full NextAuth config
     auth.config.ts                    # Edge-safe auth config (middleware)
     mongodb.ts                        # Mongoose connection singleton
-    apiAuth.ts                        # Extract userId from session
+    apiAuth.ts                        # Workspace-scoped auth context + role checks
     profilePath.ts                    # Browser profile directory helper
     cookies.ts                        # Multi-format cookie parser
-    scraper.ts                        # Scrape orchestrator
-    ai.ts                             # AI evaluation via OpenClaw
+    scraper.ts                        # Scrape orchestrator (workspace-scoped)
+    ai.ts                             # AI evaluation + keyword suggestions + tone hints
+    postReply.ts                      # Shared posting helper (resolve post + finalize)
     types.ts                          # TypeScript interfaces
     platforms/
-      types.ts                        # Shared platform types & constants
-      twitter.ts                      # Twitter verifier + scraper
-      reddit.ts                       # Reddit verifier + scraper
-      facebook.ts                     # Facebook verifier + scraper
-      quora.ts                        # Quora verifier + scraper
-      youtube.ts                      # YouTube verifier + scraper
-      pinterest.ts                    # Pinterest verifier + scraper
+      types.ts                        # Shared platform types + posting interfaces
+      twitter.ts                      # Twitter verifier + scraper + poster
+      reddit.ts                       # Reddit verifier + scraper + poster
+      facebook.ts                     # Facebook verifier + scraper + poster
+      quora.ts                        # Quora verifier + scraper + poster
+      youtube.ts                      # YouTube verifier + scraper + poster
+      pinterest.ts                    # Pinterest verifier + scraper + poster
   models/
-    User.ts                           # User model (email, password, name)
-    Post.ts                           # Post model (scrape + AI + reply schema)
-    Settings.ts                       # Settings model (company + platform configs)
+    User.ts                           # User model (email, password, name, activeWorkspaceId)
+    Post.ts                           # Post model (scrape + AI + reply + competitor + AB)
+    Settings.ts                       # Settings model (company + platform + competitor + AB)
+    Workspace.ts                      # Workspace model (name, slug, members + roles)
+    Invitation.ts                     # Invitation model (email, token, role, status)
+    ActivityLog.ts                    # Activity log model (workspace actions)
+    KeywordMetric.ts                  # Keyword performance metrics per day
+    TonePerformance.ts                # A/B tone performance per platform
+  types/
+    next-auth.d.ts                    # Extended NextAuth types (workspace, role)
   middleware.ts                       # Edge middleware for route protection
+scripts/
+  migrate-workspaces.ts              # Migration: userId-scoped data -> workspaceId
 ```
 
 ## API Endpoints
 
-### Implemented
+All API routes (except auth) require authentication and workspace membership. Write operations require `owner` or `editor` role.
 
 | Method | Endpoint | Description |
 |---|---|---|
 | GET, POST | `/api/auth/[...nextauth]` | NextAuth sign-in, sign-out, session |
-| POST | `/api/auth/register` | Create new user account |
-| GET | `/api/posts` | List posts (filters: `status`, `platform`, `minScore`, `page`, `limit`) |
-| PATCH | `/api/posts` | Update post status and/or edited reply |
-| GET | `/api/settings` | Get current user's settings |
-| PUT | `/api/settings` | Create or update settings (upsert) |
+| POST | `/api/auth/register` | Create account + default workspace |
+| GET | `/api/posts` | List posts (filters: `status`, `platform`, `minScore`, `opportunities`, `page`) |
+| PATCH | `/api/posts` | Update post status, edited reply, or selected variation |
+| GET | `/api/settings` | Get workspace settings |
+| PUT | `/api/settings` | Update settings (company, platforms, competitors, AB config) |
 | GET | `/api/social-accounts` | List connected social accounts |
 | POST | `/api/social-accounts` | Add a social account |
 | DELETE | `/api/social-accounts?id=` | Remove a social account |
-| GET | `/api/stats` | Aggregated counts by status and platform |
+| GET | `/api/stats` | Counts by status, platform, competitors, tone performance |
 | POST | `/api/scrape` | Trigger scraping across all enabled platforms |
 | POST | `/api/evaluate` | Trigger AI evaluation on new posts |
 | POST | `/api/run-pipeline` | Run full scrape + evaluate pipeline |
@@ -208,17 +306,25 @@ src/
 | POST | `/api/set-quora-cookies` | Verify and store Quora cookies |
 | POST | `/api/set-youtube-cookies` | Verify and store YouTube cookies |
 | POST | `/api/set-pinterest-cookies` | Verify and store Pinterest cookies |
-
-### Pending (Phase 3: Platform Posting)
-
-| Method | Endpoint | Description |
-|---|---|---|
 | POST | `/api/post-reply` | Post reply to Twitter/X |
 | POST | `/api/fb-post-reply` | Post reply to Facebook |
 | POST | `/api/rd-post-reply` | Post reply to Reddit |
 | POST | `/api/qa-post-reply` | Post reply to Quora |
 | POST | `/api/yt-post-reply` | Post reply to YouTube |
 | POST | `/api/pin-post-reply` | Post reply to Pinterest |
+| GET, POST | `/api/workspaces` | List or create workspaces |
+| PATCH, DELETE | `/api/workspaces/[id]` | Update or delete workspace |
+| POST | `/api/workspaces/[id]/invite` | Invite member by email |
+| GET, PATCH, DELETE | `/api/workspaces/[id]/members` | Manage workspace members |
+| POST | `/api/workspaces/switch` | Switch active workspace |
+| POST | `/api/invitations/accept` | Accept workspace invitation |
+| GET | `/api/activity` | Workspace activity feed |
+| GET | `/api/competitor-stats` | Competitor mention stats + sentiment |
+| POST | `/api/keyword-suggestions` | AI-powered keyword suggestions |
+| POST | `/api/keyword-related` | Related keyword expansion |
+| GET | `/api/keyword-metrics` | Keyword performance metrics |
+| GET | `/api/ab-stats` | A/B tone performance stats |
+| POST | `/api/update-engagement` | Update engagement metrics on posted replies |
 
 ## Database Models
 
@@ -226,30 +332,65 @@ src/
 - `email` — unique, lowercase
 - `password` — bcrypt hashed
 - `name`
+- `activeWorkspaceId` — reference to current workspace
 - Timestamps (createdAt, updatedAt)
 
+### Workspace
+- `name`, `slug` (unique)
+- `ownerId` — reference to User
+- `members[]` — array of `{ userId, role, invitedBy, joinedAt }`
+- Roles: `owner`, `editor`, `reviewer`
+- Indexes on `members.userId` and `slug`
+
 ### Post
-- `userId` — scoped to user
-- `url` — unique per user
+- `userId`, `workspaceId` — scoped to workspace
+- `url` — unique per workspace
 - `platform` — twitter / reddit / facebook / quora / youtube / pinterest
 - `author`, `content`, `scrapedAt`
 - `status` — new / evaluating / evaluated / approved / rejected / posted
 - `aiReply`, `aiRelevanceScore`, `aiTone`, `aiReasoning`
 - `keywordsMatched` — array of matched keywords
-- `editedReply`, `replyUrl`
+- `editedReply`, `replyUrl`, `postedAt`, `postedByAccount`, `postedTone`
 - Social metrics: `likeCount`, `retweetCount`, `replyCount`, `bookmarkCount`, `viewCount`
 - Bot engagement tracking: `botReplyEngagement`, `botReplyReplies`
 - Follow-up system: `followUpStatus`, `followUpText`, `followUpPostedAt`
 - `monitorUntil` — conversation monitoring window
+- Competitor fields: `competitorMentioned`, `competitorSentiment`, `competitorOpportunityScore`, `isCompetitorOpportunity`
+- A/B Testing: `aiReplies[]` (text + tone + selected), `selectedVariationIndex`, `postedTone`
 
 ### Settings
-- `userId` — scoped to user
+- `userId`, `workspaceId` — scoped to workspace
 - `companyName`, `companyDescription`
 - `keywords`, `platforms`, `subreddits`
 - `promptTemplate` — custom AI prompt
 - `socialAccounts` — connected platform accounts with cookies
 - Per-platform config (keywords, daily limits, auto-post thresholds)
 - `platformSchedules` — per-platform cron schedules with timezone support
+- Competitor intelligence: `competitors[]` (name, url, description), `competitorAlertThreshold`
+- Keyword discovery: `suggestedKeywords[]`, `keywordSuggestionsLastRun`
+- A/B Testing: `abTestingEnabled`, `abVariationCount`, `abTonePresets[]`, `abAutoOptimize`
+
+### Invitation
+- `workspaceId`, `email`, `role`, `invitedBy`
+- `token` — unique invitation token
+- `status` — pending / accepted / expired
+- `expiresAt` — auto-expiration date
+
+### ActivityLog
+- `workspaceId`, `userId`
+- `action` — post.approved / post.rejected / post.edited / post.posted / settings.updated / member.invited / member.joined / member.removed / workspace.created / workspace.updated
+- `targetType`, `targetId`, `meta`
+
+### KeywordMetric
+- `userId`, `keyword`, `date`
+- `postsFound`, `highRelevanceCount`, `avgRelevanceScore`
+- `platforms` — Map of per-platform stats
+- Unique index on `(userId, keyword, date)`
+
+### TonePerformance
+- `userId`, `platform`, `tone`
+- `totalPosts`, `totalLikes`, `totalReplies`, `avgEngagementScore`
+- Unique index on `(userId, platform, tone)`
 
 ## Getting Started
 
@@ -319,11 +460,27 @@ docker run -d \
   serpbays-saas
 ```
 
-The `profiles` volume persists browser state across container restarts. MongoDB must be accessible from inside the container — use `host.docker.internal` or a network alias:
+The `profiles` volume persists browser state (Playwright sessions, `.verified` cookie files) across container restarts. This is required for platform posting — without it, cookie verification is lost on restart.
+
+MongoDB must be accessible from inside the container — use `host.docker.internal` or a network alias:
 
 ```env
 MONGODB_URI=mongodb://host.docker.internal:27017/serpbays-saas
 ```
+
+#### Migration (existing installs)
+
+If upgrading from a userId-scoped installation to workspace-scoped, run the migration script:
+
+```bash
+# Outside Docker
+npx tsx scripts/migrate-workspaces.ts
+
+# Inside Docker
+docker exec serpbays npx tsx scripts/migrate-workspaces.ts
+```
+
+This creates a default workspace for each user and migrates all posts/settings to workspace scope.
 
 ### Docker Compose (with MongoDB)
 
@@ -361,18 +518,22 @@ volumes:
 ## Architecture Notes
 
 - **Edge Middleware** — Route protection runs on the Edge Runtime using a lightweight auth config (`auth.config.ts`) that avoids Node.js-only dependencies (bcrypt, mongoose). Full auth with DB lookups runs only in Node.js API routes.
-- **Multi-Tenancy** — All data is user-scoped from day one. No shared state between users.
-- **Cookie Verification** — Each platform verifier launches a headless Playwright browser, injects user-provided cookies, navigates to the platform, and confirms login state by checking for redirect patterns. Verified cookie state is persisted in `.verified` files for use by scrapers.
+- **Workspace-Scoped Multi-Tenancy** — All data is workspace-scoped. Users can belong to multiple workspaces with different roles. The active workspace is stored in the JWT session and used by `getApiContext()` to scope every API call.
+- **Role-Based Access Control** — `owner` has full access, `editor` can create/modify/post, `reviewer` has read-only access. Enforced via `requireRole()` on every write endpoint.
+- **Cookie Verification** — Each platform verifier launches a headless Playwright browser, injects user-provided cookies, navigates to the platform, and confirms login state by checking for redirect patterns. Verified cookie state is persisted in `.verified` files for use by scrapers and posters.
 - **Scraping Pipeline** — The scrape orchestrator loads per-platform settings (keywords, limits, cookie state), runs all enabled platform scrapers in parallel, and bulk-upserts discovered posts with deduplication via compound unique index.
-- **AI Evaluation** — Posts are evaluated via the OpenClaw AI gateway (HTTP API primary, CLI fallback). The system builds a prompt with company context, sends it to OpenClaw, and parses the structured JSON response containing relevance score, suggested reply, tone, and reasoning.
-- **Browser Automation** — Uses persistent browser profiles with cookie-based auth for headless browser automation. Anti-bot measures include custom user agents and disabled automation detection flags.
+- **AI Evaluation** — Posts are evaluated via the OpenClaw AI gateway (HTTP API primary, CLI fallback). The system builds a prompt with company context, competitor awareness, and tone performance hints. Supports multi-variation generation for A/B testing and competitor mention detection with sentiment scoring.
+- **Platform Posting** — A shared posting helper (`postReply.ts`) resolves the reply text (edited > A/B variation > AI reply), loads cookies from `.verified` files, and delegates to platform-specific posters. API-based platforms (Twitter, Pinterest) use direct HTTP calls. DOM-based platforms (Facebook, Quora, Reddit, YouTube) use Playwright browser automation. All routes update post status and log activity.
+- **Browser Automation** — Uses persistent browser profiles with cookie-based auth for headless browser automation. Anti-bot measures include custom user agents and disabled automation detection flags. Profiles are workspace-scoped under `profiles/{workspaceId}/{platform}/`.
+- **Activity Logging** — All team actions (approvals, rejections, edits, posts, settings changes, member management) are logged to `ActivityLog` for audit trail and team collaboration visibility.
 
 ## Implementation Status
 
 - **Phase 0** — Auth, multi-tenancy, dashboard UI, settings, post CRUD, stats
 - **Phase 1** — Cookie verification & account connection (6 platforms)
 - **Phase 2** — Scraping & AI evaluation pipeline (scrape, evaluate, run-pipeline)
-- **Phase 3** (pending) — Platform posting (6 reply endpoints)
+- **Growth Features** — Multi-brand workspaces, team collaboration, competitor intelligence, keyword discovery, A/B testing
+- **Phase 3** — Platform posting (6 reply endpoints: Twitter, Facebook, Reddit, Quora, YouTube, Pinterest)
 
 ## License
 

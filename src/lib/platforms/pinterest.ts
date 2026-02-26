@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import type { VerifyOptions, VerificationResult, ScrapeContext, ScrapedPost } from './types';
+import type { VerifyOptions, VerificationResult, ScrapeContext, ScrapedPost, PostReplyContext, PostReplyResult } from './types';
 import { BROWSER_ARGS, DEFAULT_USER_AGENT, NAVIGATION_TIMEOUT } from './types';
 
 export async function verifyPinterestCookies(opts: VerifyOptions): Promise<VerificationResult> {
@@ -133,4 +133,69 @@ export async function scrapePinterest(ctx: ScrapeContext): Promise<ScrapedPost[]
   }
 
   return posts;
+}
+
+/**
+ * Post a comment on a Pinterest pin using Pinterest's internal resource API.
+ * Extracts the pin ID from the URL and calls PinCommentResource/create/.
+ */
+export async function postPinterestReply(ctx: PostReplyContext): Promise<PostReplyResult> {
+  const { postUrl, replyText, cookieMap } = ctx;
+
+  if (!cookieMap['_pinterest_sess']) {
+    return { success: false, error: 'Missing required cookie: _pinterest_sess' };
+  }
+
+  // Extract pin ID from URL: https://www.pinterest.com/pin/{pinId}/
+  const pinIdMatch = postUrl.match(/\/pin\/(\d+)/);
+  if (!pinIdMatch) {
+    return { success: false, error: 'Could not extract pin ID from URL' };
+  }
+  const pinId = pinIdMatch[1];
+
+  const csrfToken = cookieMap['csrftoken'] || '';
+  const headers: Record<string, string> = {
+    'User-Agent': DEFAULT_USER_AGENT,
+    'X-CSRFToken': csrfToken,
+    Cookie: `_pinterest_sess=${cookieMap['_pinterest_sess']}; csrftoken=${csrfToken}`,
+    'X-Requested-With': 'XMLHttpRequest',
+    'Content-Type': 'application/x-www-form-urlencoded',
+    Accept: 'application/json',
+    Origin: 'https://www.pinterest.com',
+    Referer: postUrl,
+  };
+
+  try {
+    const body = new URLSearchParams({
+      source_url: `/pin/${pinId}/`,
+      data: JSON.stringify({
+        options: {
+          pin_id: pinId,
+          text: replyText,
+        },
+        context: {},
+      }),
+    });
+
+    const res = await fetch('https://www.pinterest.com/resource/PinCommentResource/create/', {
+      method: 'POST',
+      headers,
+      body: body.toString(),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => '');
+      return { success: false, error: `Pinterest API error ${res.status}: ${errorText.slice(0, 200)}` };
+    }
+
+    const data = await res.json();
+    const commentId = data?.resource_response?.data?.id;
+    const replyUrl = commentId
+      ? `${postUrl}#comment-${commentId}`
+      : postUrl;
+
+    return { success: true, replyUrl };
+  } catch (err) {
+    return { success: false, error: `Failed to post Pinterest comment: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }

@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import type { VerifyOptions, VerificationResult, ScrapeContext, ScrapedPost } from './types';
+import type { VerifyOptions, VerificationResult, ScrapeContext, ScrapedPost, PostReplyContext, PostReplyResult } from './types';
 import { BROWSER_ARGS, DEFAULT_USER_AGENT, NAVIGATION_TIMEOUT } from './types';
 
 export async function verifyYoutubeCookies(opts: VerifyOptions): Promise<VerificationResult> {
@@ -166,4 +166,133 @@ export async function scrapeYoutube(ctx: ScrapeContext): Promise<ScrapedPost[]> 
   }
 
   return posts;
+}
+
+/**
+ * Post a comment on a YouTube video using Playwright DOM automation.
+ * Navigates to the video, scrolls to load comments, types in the comment box, and submits.
+ */
+export async function postYoutubeReply(ctx: PostReplyContext): Promise<PostReplyResult> {
+  const { postUrl, replyText, cookieList, cookieMap, profileDir } = ctx;
+
+  const hasGoogleCookies = cookieMap['SID'] || cookieMap['HSID'] || cookieMap['SSID'];
+  if (!hasGoogleCookies) {
+    return { success: false, error: 'Missing required Google cookies: SID, HSID, or SSID' };
+  }
+
+  mkdirSync(profileDir, { recursive: true });
+  try { unlinkSync(join(profileDir, 'SingletonLock')); } catch {}
+
+  const context = await chromium.launchPersistentContext(profileDir, {
+    headless: true,
+    args: BROWSER_ARGS,
+    userAgent: DEFAULT_USER_AGENT,
+    viewport: { width: 1280, height: 900 },
+    locale: 'en-US',
+  });
+
+  try {
+    await context.addCookies(cookieList);
+    const page = context.pages()[0] || await context.newPage();
+
+    await page.goto(postUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+    await page.waitForTimeout(4000);
+
+    // Check for sign-in redirect
+    const url = page.url();
+    if (url.includes('accounts.google.com') || url.includes('/signin')) {
+      return { success: false, error: 'Session expired — redirected to Google sign-in. Please re-verify cookies.' };
+    }
+
+    // Scroll down to load the comments section
+    for (let i = 0; i < 4; i++) {
+      await page.mouse.wheel(0, 600);
+      await page.waitForTimeout(1500);
+    }
+
+    // Find the comment input placeholder and click it to activate the real input
+    const placeholderSelectors = [
+      '#simplebox-placeholder',
+      'ytd-comment-simplebox-renderer #placeholder-area',
+      'div#placeholder-area',
+    ];
+
+    let placeholder = null;
+    for (const selector of placeholderSelectors) {
+      placeholder = await page.$(selector);
+      if (placeholder) {
+        const visible = await placeholder.isVisible().catch(() => false);
+        if (visible) break;
+        placeholder = null;
+      }
+    }
+
+    if (!placeholder) {
+      return { success: false, error: 'Could not find comment box. Comments may be disabled on this video.' };
+    }
+
+    await placeholder.click();
+    await page.waitForTimeout(1500);
+
+    // Now find the active contenteditable comment input
+    const editorSelectors = [
+      '#contenteditable-root[contenteditable="true"]',
+      'div#contenteditable-root',
+      'ytd-comment-simplebox-renderer div[contenteditable="true"]',
+    ];
+
+    let editor = null;
+    for (const selector of editorSelectors) {
+      editor = await page.$(selector);
+      if (editor) {
+        const visible = await editor.isVisible().catch(() => false);
+        if (visible) break;
+        editor = null;
+      }
+    }
+
+    if (!editor) {
+      return { success: false, error: 'Could not find comment editor after clicking placeholder.' };
+    }
+
+    await editor.click();
+    await page.waitForTimeout(300);
+    await page.keyboard.type(replyText, { delay: 15 });
+    await page.waitForTimeout(1000);
+
+    // Click the Submit button
+    const submitSelectors = [
+      '#submit-button ytd-button-renderer button',
+      '#submit-button button',
+      'ytd-comment-simplebox-renderer #submit-button button',
+      'button[aria-label="Comment"]',
+    ];
+
+    let submitBtn = null;
+    for (const selector of submitSelectors) {
+      submitBtn = await page.$(selector);
+      if (submitBtn) {
+        const visible = await submitBtn.isVisible().catch(() => false);
+        const disabled = await submitBtn.getAttribute('disabled');
+        if (visible && disabled === null) break;
+        submitBtn = null;
+      }
+    }
+
+    if (!submitBtn) {
+      return { success: false, error: 'Could not find the Comment submit button.' };
+    }
+
+    await submitBtn.click();
+    await page.waitForTimeout(4000);
+
+    // YouTube doesn't easily expose a comment permalink
+    const replyUrl = postUrl;
+
+    return { success: true, replyUrl };
+  } catch (err) {
+    return { success: false, error: `Failed to post YouTube comment: ${err instanceof Error ? err.message : String(err)}` };
+  } finally {
+    await context.close();
+  }
 }

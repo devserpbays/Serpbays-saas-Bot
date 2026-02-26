@@ -35,6 +35,20 @@ export interface ScrapeContext {
   facebookGroups?: string[];
 }
 
+export interface PostReplyContext {
+  postUrl: string;
+  replyText: string;
+  cookieMap: Record<string, string>;
+  cookieList: Cookie[];
+  profileDir: string;
+}
+
+export interface PostReplyResult {
+  success: boolean;
+  replyUrl?: string;
+  error?: string;
+}
+
 export const BROWSER_ARGS = [
   '--no-sandbox',
   '--disable-setuid-sandbox',
