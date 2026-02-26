@@ -70,3 +70,35 @@ export interface AIEvaluation {
   tone: string;
   reasoning: string;
 }
+
+export interface ScrapedPost {
+  url: string;
+  platform: string;
+  author: string;
+  content: string;
+  scrapedAt: Date;
+  likeCount?: number;
+  replyCount?: number;
+  viewCount?: number;
+}
+
+export interface ScrapeResult {
+  totalScraped: number;
+  newPosts: number;
+  errors: string[];
+}
+
+export interface EvaluateResult {
+  evaluated: number;
+  total: number;
+}
+
+export interface PipelineResult {
+  scraped: number;
+  newPosts: number;
+  evaluated: number;
+  skipped: number;
+  errors: string[];
+  startedAt: string;
+  finishedAt: string;
+}
