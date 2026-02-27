@@ -231,6 +231,24 @@ export interface PipelineResult {
   finishedAt: string;
 }
 
+export type CookieHealthStatus = 'healthy' | 'stale' | 'missing' | 'invalid';
+
+export interface AccountHealth {
+  accountId: string;
+  platform: string;
+  username: string;
+  status: CookieHealthStatus;
+  verifiedAt: string | null;
+  ageHours: number | null;
+  missingCookies: string[];
+  message: string;
+}
+
+export interface CookieHealthResult {
+  accounts: AccountHealth[];
+  summary: Record<CookieHealthStatus, number>;
+}
+
 export interface ApiContext {
   userId: string;
   workspaceId: string;

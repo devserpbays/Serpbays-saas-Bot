@@ -22,6 +22,7 @@ interface SettingsPanelProps {
   onClose: () => void;
   workspaceId?: string;
   role?: WorkspaceRole;
+  defaultTab?: string;
 }
 
 interface MemberInfo {
@@ -109,9 +110,15 @@ function AddAccountForm({ platform, nextIndex, onSuccess, onCancel }: {
   );
 }
 
-export default function SettingsPanel({ open, onClose, workspaceId, role = 'owner' }: SettingsPanelProps) {
+export default function SettingsPanel({ open, onClose, workspaceId, role = 'owner', defaultTab }: SettingsPanelProps) {
   const canEdit = role === 'owner' || role === 'editor';
   const isOwner = role === 'owner';
+
+  const [activeTab, setActiveTab] = useState(defaultTab || 'general');
+
+  useEffect(() => {
+    if (open) setActiveTab(defaultTab || 'general');
+  }, [open, defaultTab]);
 
   const [settings, setSettings] = useState<ISettings>({
     userId: '', companyName: '', companyDescription: '',
@@ -349,7 +356,7 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
           </SheetTitle>
         </SheetHeader>
 
-        <Tabs defaultValue="general" className="px-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="px-6">
           <TabsList className="w-full grid grid-cols-4">
             <TabsTrigger value="general">General</TabsTrigger>
             <TabsTrigger value="platforms">Platforms</TabsTrigger>

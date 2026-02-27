@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { signOut, useSession } from 'next-auth/react';
-import type { IPost, SocialAccount, WorkspaceRole, SchedulerStatus } from '@/lib/types';
+import type { IPost, SocialAccount, WorkspaceRole, SchedulerStatus, AccountHealth, CookieHealthStatus } from '@/lib/types';
 import PostCard from './PostCard';
 import SettingsPanel from './SettingsPanel';
 import ActivityFeed from './ActivityFeed';
+import OnboardingChecklist from './OnboardingChecklist';
 import { PLATFORMS, PLATFORM_MAP, PlatformIcon } from '@/lib/platforms/config';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,6 +20,7 @@ import {
   Settings, LogOut, Clock, Play, Loader2, ChevronDown, ChevronLeft,
   ChevronRight, Plus, AlertTriangle, TrendingUp, TrendingDown, Minus,
   FlaskConical, BarChart3, FileText, Timer, Square, Zap,
+  ShieldCheck, ShieldAlert, ShieldX, ShieldOff, RefreshCw,
 } from 'lucide-react';
 
 interface PostsResponse {
@@ -113,6 +115,11 @@ export default function Dashboard() {
   const [enabledPlatforms, setEnabledPlatforms] = useState<string[]>([]);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
 
+  const [companyName, setCompanyName] = useState('');
+  const [companyDescription, setCompanyDescription] = useState('');
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [settingsDefaultTab, setSettingsDefaultTab] = useState<string | undefined>();
+
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceInfo | null>(null);
   const [userRole, setUserRole] = useState<WorkspaceRole>('owner');
@@ -122,6 +129,9 @@ export default function Dashboard() {
 
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
   const [schedulerToggling, setSchedulerToggling] = useState(false);
+
+  const [cookieHealth, setCookieHealth] = useState<AccountHealth[]>([]);
+  const [healthSummary, setHealthSummary] = useState<Record<CookieHealthStatus, number>>({ healthy: 0, stale: 0, missing: 0, invalid: 0 });
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -188,6 +198,9 @@ export default function Dashboard() {
       if (data.settings) {
         setEnabledPlatforms(data.settings.platforms ?? []);
         setSocialAccounts(data.settings.socialAccounts ?? []);
+        setCompanyName(data.settings.companyName ?? '');
+        setCompanyDescription(data.settings.companyDescription ?? '');
+        setKeywords(data.settings.keywords ?? []);
       }
     } catch {/* silent */}
   }, []);
@@ -206,6 +219,17 @@ export default function Dashboard() {
       if (res.ok) {
         const data: SchedulerStatus = await res.json();
         setScheduler(data);
+      }
+    } catch {/* silent */}
+  }, []);
+
+  const fetchCookieHealth = useCallback(async () => {
+    try {
+      const res = await fetch('/api/cookie-health');
+      if (res.ok) {
+        const data = await res.json();
+        setCookieHealth(data.accounts || []);
+        setHealthSummary(data.summary || { healthy: 0, stale: 0, missing: 0, invalid: 0 });
       }
     } catch {/* silent */}
   }, []);
@@ -238,8 +262,9 @@ export default function Dashboard() {
       fetchSettings();
       fetchKeywordMetrics();
       fetchSchedulerStatus();
+      fetchCookieHealth();
     }
-  }, [activeWorkspace, fetchPosts, fetchStats, fetchSettings, fetchKeywordMetrics, fetchSchedulerStatus]);
+  }, [activeWorkspace, fetchPosts, fetchStats, fetchSettings, fetchKeywordMetrics, fetchSchedulerStatus, fetchCookieHealth]);
 
   useEffect(() => {
     if (!activeWorkspace) return;
@@ -288,7 +313,14 @@ export default function Dashboard() {
 
   const handleSettingsClose = () => {
     setSettingsOpen(false);
+    setSettingsDefaultTab(undefined);
     fetchSettings();
+    fetchCookieHealth();
+  };
+
+  const handleOpenSettingsToTab = (tab: string) => {
+    setSettingsDefaultTab(tab);
+    setSettingsOpen(true);
   };
 
   const handleScrape = async () => {
@@ -376,6 +408,18 @@ export default function Dashboard() {
   const isAnyActionRunning = scraping || evaluating || pipelineRunning;
   const canAct = userRole === 'owner' || userRole === 'editor';
 
+  // DEBUG: remove after testing onboarding
+  console.log('[Onboarding Debug]', {
+    activeWorkspace: !!activeWorkspace,
+    statsTotal: stats.total,
+    companyName,
+    companyDescription,
+    keywords,
+    enabledPlatforms,
+    socialAccounts: socialAccounts.length,
+    showChecklist: !!activeWorkspace && stats.total === 0,
+  });
+
   const visiblePlatforms = PLATFORMS.filter(
     (p) => enabledPlatforms.includes(p.id) || (stats.byPlatform[p.id] ?? 0) > 0
   );
@@ -388,6 +432,18 @@ export default function Dashboard() {
     if (trend === 'falling') return <TrendingDown className="w-3.5 h-3.5 text-red-500" />;
     return <Minus className="w-3.5 h-3.5 text-muted-foreground" />;
   };
+
+  const healthIcon = (status: CookieHealthStatus) => {
+    if (status === 'healthy') return <ShieldCheck className="w-3.5 h-3.5 text-green-500" />;
+    if (status === 'stale') return <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />;
+    if (status === 'invalid') return <ShieldX className="w-3.5 h-3.5 text-red-500" />;
+    return <ShieldOff className="w-3.5 h-3.5 text-muted-foreground" />;
+  };
+
+  const healthForPlatform = (platformId: string): AccountHealth | undefined =>
+    cookieHealth.find((h) => h.platform === platformId);
+
+  const totalHealthIssues = healthSummary.stale + healthSummary.missing + healthSummary.invalid;
 
   return (
     <div className="min-h-screen bg-background">
@@ -480,6 +536,21 @@ export default function Dashboard() {
           </Card>
         )}
 
+        {/* Onboarding Checklist — auto-dismisses after first successful pipeline run */}
+        {activeWorkspace && stats.total === 0 && (
+          <OnboardingChecklist
+            companyName={companyName}
+            companyDescription={companyDescription}
+            keywords={keywords}
+            enabledPlatforms={enabledPlatforms}
+            socialAccounts={socialAccounts}
+            totalPosts={stats.total}
+            pipelineRunning={pipelineRunning}
+            onOpenSettings={handleOpenSettingsToTab}
+            onRunPipeline={handleRunPipeline}
+          />
+        )}
+
         {/* Competitor Opportunities Alert */}
         {stats.competitorOpportunities > 0 && (
           <Alert className="border-amber-500/30 bg-amber-500/10">
@@ -497,6 +568,60 @@ export default function Dashboard() {
               >
                 {showOpportunities ? 'Show All' : 'View'}
               </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Cookie Health Alert */}
+        {totalHealthIssues > 0 && (
+          <Alert className="border-orange-500/30 bg-orange-500/10">
+            <ShieldAlert className="h-4 w-4 text-orange-500" />
+            <AlertTitle className="text-orange-400">Cookie Health Issues</AlertTitle>
+            <AlertDescription className="text-orange-400/80">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-3 text-sm">
+                  {healthSummary.missing > 0 && (
+                    <span className="flex items-center gap-1">
+                      <ShieldOff className="w-3.5 h-3.5" />
+                      {healthSummary.missing} missing
+                    </span>
+                  )}
+                  {healthSummary.invalid > 0 && (
+                    <span className="flex items-center gap-1 text-red-400">
+                      <ShieldX className="w-3.5 h-3.5" />
+                      {healthSummary.invalid} invalid
+                    </span>
+                  )}
+                  {healthSummary.stale > 0 && (
+                    <span className="flex items-center gap-1 text-amber-400">
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      {healthSummary.stale} stale
+                    </span>
+                  )}
+                  {healthSummary.healthy > 0 && (
+                    <span className="flex items-center gap-1 text-green-400">
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      {healthSummary.healthy} healthy
+                    </span>
+                  )}
+                </div>
+                <Button variant="outline" size="sm" onClick={() => { setSettingsOpen(true); }} className="shrink-0">
+                  Fix in Settings
+                </Button>
+              </div>
+              {cookieHealth.filter((h) => h.status !== 'healthy').length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {cookieHealth.filter((h) => h.status !== 'healthy').map((h) => (
+                    <div key={h.accountId || h.platform} className="flex items-center gap-2 text-xs">
+                      {healthIcon(h.status)}
+                      <PlatformIcon platform={h.platform} className="w-4 h-4" />
+                      <span className="font-medium">{PLATFORM_MAP[h.platform]?.label || h.platform}</span>
+                      {h.username && <span className="text-orange-400/60">@{h.username}</span>}
+                      <span className="text-orange-400/60">— {h.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -539,6 +664,8 @@ export default function Dashboard() {
               const posted = stats.postedByPlatform[p.id] ?? 0;
               const accounts = accountsForPlatform(p.id);
 
+              const health = healthForPlatform(p.id);
+
               return (
                 <Button
                   key={p.id}
@@ -554,6 +681,11 @@ export default function Dashboard() {
                     <Badge variant="secondary" className="text-[10px] px-1.5">
                       {posted} posted
                     </Badge>
+                  )}
+                  {health && (
+                    <span title={health.message}>
+                      {healthIcon(health.status)}
+                    </span>
                   )}
                   {accounts.length > 0 && (
                     <span className="flex items-center -space-x-1 ml-0.5">
@@ -864,7 +996,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      <SettingsPanel open={settingsOpen} onClose={handleSettingsClose} workspaceId={activeWorkspace?._id} role={userRole} />
+      <SettingsPanel open={settingsOpen} onClose={handleSettingsClose} workspaceId={activeWorkspace?._id} role={userRole} defaultTab={settingsDefaultTab} />
     </div>
   );
 }
