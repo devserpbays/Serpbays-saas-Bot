@@ -9,6 +9,7 @@ import Post from '@/models/Post';
 import Settings from '@/models/Settings';
 import KeywordMetric from '@/models/KeywordMetric';
 import TonePerformance from '@/models/TonePerformance';
+import ActivityLog from '@/models/ActivityLog';
 import type { AIEvaluation, EvaluateResult, Competitor, KeywordSuggestion } from '@/lib/types';
 
 const execAsync = promisify(exec);
@@ -429,7 +430,7 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
   await connectDB();
 
   const settings = await Settings.findOne({ workspaceId }).lean();
-  if (!settings) return { evaluated: 0, total: 0 };
+  if (!settings) return { evaluated: 0, total: 0, autoApproved: 0 };
 
   const settingsObj = settings as Record<string, unknown>;
   const companyName = (settingsObj.companyName as string) || '';
@@ -442,6 +443,17 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
   const abAutoOptimize = settingsObj.abAutoOptimize === true;
   const competitorAlertThreshold = (settingsObj.competitorAlertThreshold as number) || 60;
   const userId = (settingsObj.userId as { toString(): string }).toString();
+  const workspaceIdStr = (settingsObj.workspaceId as { toString(): string })?.toString() || '';
+
+  // Per-platform auto-approve thresholds
+  const autoPostThresholds: Record<string, number> = {
+    facebook: (settingsObj.facebookAutoPostThreshold as number) ?? 70,
+    twitter: (settingsObj.twitterAutoPostThreshold as number) ?? 70,
+    reddit: (settingsObj.redditAutoPostThreshold as number) ?? 70,
+    quora: (settingsObj.quoraAutoPostThreshold as number) ?? 70,
+    youtube: (settingsObj.youtubeAutoPostThreshold as number) ?? 70,
+    pinterest: (settingsObj.pinterestAutoPostThreshold as number) ?? 70,
+  };
 
   // Find posts with status 'new', limit batch size
   const posts = await Post.find({ workspaceId, status: 'new' })
@@ -449,7 +461,7 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
     .limit(50)
     .lean();
 
-  if (!posts.length) return { evaluated: 0, total: 0 };
+  if (!posts.length) return { evaluated: 0, total: 0, autoApproved: 0 };
 
   const postIds = posts.map((p) => p._id);
 
@@ -475,6 +487,7 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
   const tones = abTestingEnabled && !promptTemplate ? abTonePresets : undefined;
 
   let evaluated = 0;
+  let autoApproved = 0;
   const evaluatedPostsForMetrics: Array<{ keywordsMatched: string[]; aiRelevanceScore: number; platform: string }> = [];
 
   for (const post of posts) {
@@ -492,8 +505,13 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
 
       const matched = findMatchedKeywords(content, keywords);
 
+      // Check auto-approve threshold for this platform
+      const platform = post.platform as string;
+      const threshold = autoPostThresholds[platform] ?? 70;
+      const shouldAutoApprove = result.relevant && result.score >= threshold;
+
       const updateData: Record<string, unknown> = {
-        status: 'evaluated',
+        status: shouldAutoApprove ? 'approved' : 'evaluated',
         aiRelevanceScore: result.score,
         aiReply: result.suggestedReply,
         aiTone: result.tone,
@@ -501,6 +519,11 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
         keywordsMatched: matched,
         evaluatedAt: new Date(),
       };
+
+      if (shouldAutoApprove) {
+        updateData.approvedAt = new Date();
+        autoApproved++;
+      }
 
       // Competitor fields
       if (result.competitorMentioned) {
@@ -525,6 +548,20 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
         { _id: post._id },
         { $set: updateData }
       );
+
+      // Log auto-approval to activity feed
+      if (shouldAutoApprove && workspaceIdStr) {
+        try {
+          await ActivityLog.create({
+            workspaceId: workspaceIdStr,
+            userId,
+            action: 'post.auto_approved',
+            targetType: 'post',
+            targetId: (post._id as { toString(): string }).toString(),
+            meta: { score: result.score, threshold, platform },
+          });
+        } catch { /* silent — don't fail pipeline for logging */ }
+      }
 
       evaluatedPostsForMetrics.push({
         keywordsMatched: matched,
@@ -552,5 +589,5 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
     }
   }
 
-  return { evaluated, total: posts.length };
+  return { evaluated, total: posts.length, autoApproved };
 }

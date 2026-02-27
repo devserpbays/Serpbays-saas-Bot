@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { signOut, useSession } from 'next-auth/react';
-import type { IPost, SocialAccount, WorkspaceRole } from '@/lib/types';
+import type { IPost, SocialAccount, WorkspaceRole, SchedulerStatus } from '@/lib/types';
 import PostCard from './PostCard';
 import SettingsPanel from './SettingsPanel';
 import ActivityFeed from './ActivityFeed';
@@ -18,7 +18,7 @@ import {
 import {
   Settings, LogOut, Clock, Play, Loader2, ChevronDown, ChevronLeft,
   ChevronRight, Plus, AlertTriangle, TrendingUp, TrendingDown, Minus,
-  FlaskConical, BarChart3, FileText,
+  FlaskConical, BarChart3, FileText, Timer, Square,
 } from 'lucide-react';
 
 interface PostsResponse {
@@ -46,6 +46,7 @@ interface PipelineResult {
   scraped: number;
   newPosts: number;
   evaluated: number;
+  autoApproved: number;
   skipped: number;
   errors: string[];
   startedAt: string;
@@ -114,6 +115,9 @@ export default function Dashboard() {
 
   const [keywordMetrics, setKeywordMetrics] = useState<KeywordMetric[]>([]);
   const [showOpportunities, setShowOpportunities] = useState(false);
+
+  const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
+  const [schedulerToggling, setSchedulerToggling] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -190,6 +194,33 @@ export default function Dashboard() {
     } catch {/* silent */}
   }, []);
 
+  const fetchSchedulerStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/scheduler');
+      if (res.ok) {
+        const data: SchedulerStatus = await res.json();
+        setScheduler(data);
+      }
+    } catch {/* silent */}
+  }, []);
+
+  const handleSchedulerToggle = async () => {
+    setSchedulerToggling(true);
+    try {
+      const action = scheduler?.running ? 'stop' : 'start';
+      const res = await fetch('/api/scheduler', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (res.ok) {
+        const data: SchedulerStatus = await res.json();
+        setScheduler(data);
+      }
+    } catch {/* silent */}
+    setSchedulerToggling(false);
+  };
+
   useEffect(() => {
     fetchWorkspaces();
   }, [fetchWorkspaces]);
@@ -200,17 +231,19 @@ export default function Dashboard() {
       fetchStats();
       fetchSettings();
       fetchKeywordMetrics();
+      fetchSchedulerStatus();
     }
-  }, [activeWorkspace, fetchPosts, fetchStats, fetchSettings, fetchKeywordMetrics]);
+  }, [activeWorkspace, fetchPosts, fetchStats, fetchSettings, fetchKeywordMetrics, fetchSchedulerStatus]);
 
   useEffect(() => {
     if (!activeWorkspace) return;
     pollRef.current = setInterval(() => {
       fetchStats();
       fetchPosts();
+      fetchSchedulerStatus();
     }, POLL_INTERVAL_MS);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [activeWorkspace, fetchStats, fetchPosts]);
+  }, [activeWorkspace, fetchStats, fetchPosts, fetchSchedulerStatus]);
 
   const handleWorkspaceSwitch = async (workspaceId: string) => {
     try {
@@ -315,7 +348,7 @@ export default function Dashboard() {
     } catch {
       setPipelineStep('');
       setPipelineResult({
-        scraped: 0, newPosts: 0, evaluated: 0, skipped: 0,
+        scraped: 0, newPosts: 0, evaluated: 0, autoApproved: 0, skipped: 0,
         errors: ['Pipeline request failed — check server logs'],
         startedAt: '', finishedAt: '',
       });
@@ -635,18 +668,58 @@ export default function Dashboard() {
                     , then evaluates every new post in one click.
                   </p>
                 </div>
-                <Button
-                  onClick={handleRunPipeline}
-                  disabled={isAnyActionRunning}
-                  size="lg"
-                >
-                  {pipelineRunning ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" />Running...</>
-                  ) : (
-                    <><Play className="w-4 h-4" />Start Job</>
-                  )}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={handleSchedulerToggle}
+                    disabled={schedulerToggling}
+                    size="sm"
+                    variant={scheduler?.running ? 'destructive' : 'outline'}
+                  >
+                    {schedulerToggling ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /></>
+                    ) : scheduler?.running ? (
+                      <><Square className="w-3.5 h-3.5" />Stop Scheduler</>
+                    ) : (
+                      <><Timer className="w-3.5 h-3.5" />Auto-Schedule</>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={handleRunPipeline}
+                    disabled={isAnyActionRunning}
+                    size="lg"
+                  >
+                    {pipelineRunning ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" />Running...</>
+                    ) : (
+                      <><Play className="w-4 h-4" />Start Job</>
+                    )}
+                  </Button>
+                </div>
               </div>
+
+              {/* Scheduler Status */}
+              {scheduler?.running && (
+                <div className="flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-2.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-sm font-medium text-emerald-400">Scheduler Active</span>
+                  <span className="text-xs text-emerald-400/70">
+                    Every {Math.round((scheduler.intervalMs || 900000) / 60000)} min
+                  </span>
+                  {scheduler.nextRunAt && (
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      Next run: {new Date(scheduler.nextRunAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                  {scheduler.lastRunAt && (
+                    <span className="text-xs text-muted-foreground">
+                      Last: {new Date(scheduler.lastRunAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                  {scheduler.error && (
+                    <span className="text-xs text-destructive ml-2">{scheduler.error}</span>
+                  )}
+                </div>
+              )}
 
               {pipelineStep && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -660,11 +733,12 @@ export default function Dashboard() {
                   className={!pipelineResult.errors.length ? 'border-green-500/30 bg-green-500/10' : ''}>
                   <AlertTitle>{pipelineResult.errors.length ? 'Job complete with errors' : 'Job complete'}</AlertTitle>
                   <AlertDescription>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-2">
                       {[
                         { label: 'Scraped',   value: pipelineResult.scraped },
                         { label: 'New Posts', value: pipelineResult.newPosts },
                         { label: 'Evaluated', value: pipelineResult.evaluated },
+                        { label: 'Auto-Approved', value: pipelineResult.autoApproved || 0 },
                         { label: 'Skipped',   value: pipelineResult.skipped },
                       ].map(({ label, value }) => (
                         <div key={label} className="bg-card/70 rounded p-2 text-center border border-border">

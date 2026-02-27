@@ -5,7 +5,7 @@ export type WorkspaceRole = 'owner' | 'editor' | 'reviewer';
 export type InvitationStatus = 'pending' | 'accepted' | 'expired' | 'revoked';
 
 export type ActivityAction =
-  | 'post.approved' | 'post.rejected' | 'post.edited' | 'post.posted'
+  | 'post.approved' | 'post.auto_approved' | 'post.rejected' | 'post.edited' | 'post.posted'
   | 'settings.updated'
   | 'member.invited' | 'member.joined' | 'member.removed'
   | 'workspace.created' | 'workspace.updated';
@@ -135,6 +135,7 @@ export interface ISettings {
   pinterestKeywords?: string[];
   pinterestDailyLimit?: number;
   pinterestAutoPostThreshold?: number;
+  platformSchedules?: Record<string, PlatformSchedule>;
   competitors?: Competitor[];
   competitorAlertThreshold?: number;
   suggestedKeywords?: string[];
@@ -206,12 +207,14 @@ export interface ScrapeResult {
 export interface EvaluateResult {
   evaluated: number;
   total: number;
+  autoApproved: number;
 }
 
 export interface PipelineResult {
   scraped: number;
   newPosts: number;
   evaluated: number;
+  autoApproved: number;
   skipped: number;
   errors: string[];
   startedAt: string;
@@ -222,4 +225,22 @@ export interface ApiContext {
   userId: string;
   workspaceId: string;
   role: WorkspaceRole;
+}
+
+export interface PlatformSchedule {
+  timezone: string;
+  days: number[];
+  startHour: number;
+  endHour: number;
+  cronInterval: string;
+}
+
+export interface SchedulerStatus {
+  workspaceId: string;
+  running: boolean;
+  intervalMs: number;
+  lastRunAt: string | null;
+  lastResult: PipelineResult | null;
+  nextRunAt: string | null;
+  error: string | null;
 }

@@ -6,7 +6,7 @@ const ActivityLogSchema = new Schema({
   action: {
     type: String,
     enum: [
-      'post.approved', 'post.rejected', 'post.edited', 'post.posted',
+      'post.approved', 'post.auto_approved', 'post.rejected', 'post.edited', 'post.posted',
       'settings.updated',
       'member.invited', 'member.joined', 'member.removed',
       'workspace.created', 'workspace.updated',

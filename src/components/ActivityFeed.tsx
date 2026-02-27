@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Check, X, Pencil, Send, Settings, UserPlus, User, UserMinus, Plus, RefreshCw, Circle, Loader2, Clock,
+  Check, X, Pencil, Send, Settings, UserPlus, User, UserMinus, Plus, RefreshCw, Circle, Loader2, Clock, Zap,
 } from 'lucide-react';
 
 interface ActivityLog {
@@ -21,6 +21,12 @@ const ACTION_LABELS: Record<string, { label: string; color: string; bg: string; 
     color: 'text-green-400',
     bg: 'bg-green-500/15',
     icon: <Check className="w-3 h-3 text-green-400" />,
+  },
+  'post.auto_approved': {
+    label: 'auto-approved a post',
+    color: 'text-amber-400',
+    bg: 'bg-amber-500/15',
+    icon: <Zap className="w-3 h-3 text-amber-400" />,
   },
   'post.rejected': {
     label: 'rejected a post',
@@ -128,6 +134,8 @@ export default function ActivityFeed() {
         const config = ACTION_LABELS[log.action] || FALLBACK;
         const timeAgo = getTimeAgo(new Date(log.createdAt));
         const metaEmail = log.meta?.email as string | undefined;
+        const metaScore = log.meta?.score as number | undefined;
+        const metaPlatform = log.meta?.platform as string | undefined;
 
         return (
           <div key={log._id} className="flex items-start gap-3 text-sm py-2 px-2 rounded-lg hover:bg-accent transition-colors">
@@ -136,11 +144,14 @@ export default function ActivityFeed() {
             </span>
             <div className="flex-1 min-w-0">
               <p className="leading-snug">
-                <span className="font-semibold text-foreground">{log.userName}</span>
+                <span className="font-semibold text-foreground">{log.userName || 'System'}</span>
                 {' '}
                 <span className={config.color}>{config.label}</span>
                 {metaEmail && (
                   <span className="text-muted-foreground"> ({metaEmail})</span>
+                )}
+                {metaScore !== undefined && metaPlatform && (
+                  <span className="text-muted-foreground"> (score {metaScore}, {metaPlatform})</span>
                 )}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">{timeAgo}</p>

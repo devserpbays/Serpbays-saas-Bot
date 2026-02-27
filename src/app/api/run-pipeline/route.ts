@@ -25,6 +25,7 @@ export async function POST() {
     scraped: scrapeResult.totalScraped,
     newPosts: scrapeResult.newPosts,
     evaluated: evalResult.evaluated,
+    autoApproved: evalResult.autoApproved,
     skipped: evalResult.total - evalResult.evaluated,
     errors: scrapeResult.errors,
     startedAt,

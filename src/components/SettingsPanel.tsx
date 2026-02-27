@@ -136,6 +136,8 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
   const [suggestions, setSuggestions] = useState<KeywordSuggestion[]>([]);
   const [discoveringKeywords, setDiscoveringKeywords] = useState(false);
 
+  const [relatedKeywords, setRelatedKeywords] = useState<string[]>([]);
+  const [loadingRelated, setLoadingRelated] = useState(false);
   const [toneInput, setToneInput] = useState('');
 
   useEffect(() => {
@@ -177,10 +179,25 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
     setSaving(false);
   };
 
-  const addKeyword = () => {
-    if (keywordInput.trim() && !settings.keywords.includes(keywordInput.trim())) {
-      setSettings({ ...settings, keywords: [...settings.keywords, keywordInput.trim()] });
+  const addKeyword = async () => {
+    const kw = keywordInput.trim();
+    if (kw && !settings.keywords.includes(kw)) {
+      setSettings({ ...settings, keywords: [...settings.keywords, kw] });
       setKeywordInput('');
+      setLoadingRelated(true);
+      try {
+        const res = await fetch('/api/keyword-related', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keyword: kw }),
+        });
+        const data = await res.json();
+        if (data.suggestions) {
+          setRelatedKeywords(data.suggestions.filter((r: string) =>
+            !settings.keywords.includes(r) && r !== kw
+          ));
+        }
+      } catch { /* silent */ }
+      setLoadingRelated(false);
     }
   };
 
@@ -436,6 +453,31 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
                   </Badge>
                 ))}
               </div>
+
+              {/* Related Keywords Auto-Suggest */}
+              {(relatedKeywords.length > 0 || loadingRelated) && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-muted-foreground">Related:</span>
+                  {loadingRelated ? (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Finding related...</span>
+                  ) : (
+                    <>
+                      {relatedKeywords.map((r) => (
+                        <Button key={r} size="sm" variant="outline" className="text-xs h-6 px-2"
+                          onClick={() => {
+                            if (!settings.keywords.includes(r)) {
+                              setSettings((prev) => ({ ...prev, keywords: [...prev.keywords, r] }));
+                            }
+                            setRelatedKeywords((prev) => prev.filter((k) => k !== r));
+                          }}>
+                          <Plus className="w-3 h-3" /> {r}
+                        </Button>
+                      ))}
+                      <button onClick={() => setRelatedKeywords([])} className="text-xs text-muted-foreground hover:text-foreground">dismiss</button>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* Keyword Discovery */}
               {canEdit && (
