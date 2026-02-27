@@ -34,7 +34,9 @@ const PostSchema = new Schema({
   replyUrl: String,
   evaluatedAt: Date,
   approvedAt: Date,
+  autoApproved: { type: Boolean, default: false },
   postedAt: Date,
+  autoPosted: { type: Boolean, default: false },
   postedByAccount: { type: String, default: '' },
   botReplyEngagement: {
     likes: { type: Number, default: 0 },

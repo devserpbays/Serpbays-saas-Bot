@@ -21,7 +21,7 @@ const SettingsSchema = new Schema({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   workspaceId: { type: Schema.Types.ObjectId, ref: 'Workspace', index: true },
   companyName: { type: String, required: true },
-  companyDescription: { type: String, required: true },
+  companyDescription: { type: String, default: '' },
   keywords: [{ type: String }],
   platforms: [{ type: String, enum: ['twitter', 'reddit', 'facebook', 'quora', 'youtube', 'pinterest'], default: ['twitter', 'reddit'] }],
   subreddits: [{ type: String }],

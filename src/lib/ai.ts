@@ -522,6 +522,7 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
 
       if (shouldAutoApprove) {
         updateData.approvedAt = new Date();
+        updateData.autoApproved = true;
         autoApproved++;
       }
 

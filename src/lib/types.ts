@@ -5,7 +5,7 @@ export type WorkspaceRole = 'owner' | 'editor' | 'reviewer';
 export type InvitationStatus = 'pending' | 'accepted' | 'expired' | 'revoked';
 
 export type ActivityAction =
-  | 'post.approved' | 'post.auto_approved' | 'post.rejected' | 'post.edited' | 'post.posted'
+  | 'post.approved' | 'post.auto_approved' | 'post.auto_posted' | 'post.rejected' | 'post.edited' | 'post.posted'
   | 'settings.updated'
   | 'member.invited' | 'member.joined' | 'member.removed'
   | 'workspace.created' | 'workspace.updated';
@@ -84,7 +84,9 @@ export interface IPost {
   replyUrl?: string;
   evaluatedAt?: Date;
   approvedAt?: Date;
+  autoApproved?: boolean;
   postedAt?: Date;
+  autoPosted?: boolean;
   competitorMentioned?: string;
   competitorSentiment?: CompetitorSentiment;
   competitorOpportunityScore?: number;
@@ -210,11 +212,19 @@ export interface EvaluateResult {
   autoApproved: number;
 }
 
+export interface AutoPostResult {
+  posted: number;
+  skipped: number;
+  errors: string[];
+  byPlatform: Record<string, number>;
+}
+
 export interface PipelineResult {
   scraped: number;
   newPosts: number;
   evaluated: number;
   autoApproved: number;
+  autoPosted: number;
   skipped: number;
   errors: string[];
   startedAt: string;

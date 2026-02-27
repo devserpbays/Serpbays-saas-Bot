@@ -46,6 +46,12 @@ const ACTION_LABELS: Record<string, { label: string; color: string; bg: string; 
     bg: 'bg-emerald-500/15',
     icon: <Send className="w-3 h-3 text-emerald-400" />,
   },
+  'post.auto_posted': {
+    label: 'auto-posted a reply',
+    color: 'text-cyan-400',
+    bg: 'bg-cyan-500/15',
+    icon: <Zap className="w-3 h-3 text-cyan-400" />,
+  },
   'settings.updated': {
     label: 'updated settings',
     color: 'text-muted-foreground',

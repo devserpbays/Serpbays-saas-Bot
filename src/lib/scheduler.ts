@@ -2,6 +2,7 @@ import { connectDB } from '@/lib/mongodb';
 import Settings from '@/models/Settings';
 import { runScrape } from '@/lib/scraper';
 import { runEvaluation } from '@/lib/ai';
+import { runAutoPost } from '@/lib/autoPost';
 import type { PipelineResult, PlatformSchedule, SchedulerStatus } from '@/lib/types';
 
 interface SchedulerEntry {
@@ -129,9 +130,12 @@ async function executePipeline(entry: SchedulerEntry): Promise<void> {
       return;
     }
 
-    // Run the pipeline
+    // Phase 1: Scrape
     const scrapeResult = await runScrape(entry.workspaceId);
+    // Phase 2: Evaluate (+ auto-approve)
     const evalResult = await runEvaluation(entry.workspaceId);
+    // Phase 3: Auto-post approved posts
+    const autoPostResult = await runAutoPost(entry.workspaceId);
 
     const finishedAt = new Date();
     entry.lastResult = {
@@ -139,8 +143,9 @@ async function executePipeline(entry: SchedulerEntry): Promise<void> {
       newPosts: scrapeResult.newPosts,
       evaluated: evalResult.evaluated,
       autoApproved: evalResult.autoApproved,
+      autoPosted: autoPostResult.posted,
       skipped: evalResult.total - evalResult.evaluated,
-      errors: scrapeResult.errors,
+      errors: [...scrapeResult.errors, ...autoPostResult.errors],
       startedAt: startedAt.toISOString(),
       finishedAt: finishedAt.toISOString(),
     };

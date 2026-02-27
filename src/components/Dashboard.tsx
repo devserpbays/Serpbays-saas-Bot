@@ -18,7 +18,7 @@ import {
 import {
   Settings, LogOut, Clock, Play, Loader2, ChevronDown, ChevronLeft,
   ChevronRight, Plus, AlertTriangle, TrendingUp, TrendingDown, Minus,
-  FlaskConical, BarChart3, FileText, Timer, Square,
+  FlaskConical, BarChart3, FileText, Timer, Square, Zap,
 } from 'lucide-react';
 
 interface PostsResponse {
@@ -36,6 +36,8 @@ interface Stats {
   approved: number;
   rejected: number;
   posted: number;
+  autoApproved: number;
+  autoPosted: number;
   byPlatform: Record<string, number>;
   postedByPlatform: Record<string, number>;
   competitorOpportunities: number;
@@ -47,6 +49,7 @@ interface PipelineResult {
   newPosts: number;
   evaluated: number;
   autoApproved: number;
+  autoPosted: number;
   skipped: number;
   errors: string[];
   startedAt: string;
@@ -100,6 +103,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats>({
     total: 0, new: 0, evaluating: 0, evaluated: 0,
     approved: 0, rejected: 0, posted: 0,
+    autoApproved: 0, autoPosted: 0,
     byPlatform: {},
     postedByPlatform: {},
     competitorOpportunities: 0,
@@ -167,6 +171,8 @@ export default function Dashboard() {
         approved:         data.byStatus?.approved ?? 0,
         rejected:         data.byStatus?.rejected ?? 0,
         posted:           data.byStatus?.posted ?? 0,
+        autoApproved:     data.autoApproved ?? 0,
+        autoPosted:       data.autoPosted ?? 0,
         byPlatform:       data.byPlatform ?? {},
         postedByPlatform: data.postedByPlatform ?? {},
         competitorOpportunities: data.competitorOpportunities ?? 0,
@@ -335,7 +341,7 @@ export default function Dashboard() {
     const platformNames = enabledPlatforms.length
       ? enabledPlatforms.map((p) => PLATFORM_MAP[p]?.label ?? p).join(', ')
       : 'all platforms';
-    setPipelineStep(`Scraping ${platformNames}...`);
+    setPipelineStep(`Scraping ${platformNames}, evaluating, and auto-posting...`);
 
     try {
       const res = await fetch('/api/run-pipeline', { method: 'POST' });
@@ -348,7 +354,7 @@ export default function Dashboard() {
     } catch {
       setPipelineStep('');
       setPipelineResult({
-        scraped: 0, newPosts: 0, evaluated: 0, autoApproved: 0, skipped: 0,
+        scraped: 0, newPosts: 0, evaluated: 0, autoApproved: 0, autoPosted: 0, skipped: 0,
         errors: ['Pipeline request failed — check server logs'],
         startedAt: '', finishedAt: '',
       });
@@ -498,14 +504,14 @@ export default function Dashboard() {
         {/* Stats Bar */}
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
           {[
-            { label: 'Total',      value: stats.total,      dot: 'bg-muted-foreground' },
-            { label: 'New',        value: stats.new,         dot: 'bg-blue-500' },
-            { label: 'Evaluating', value: stats.evaluating,  dot: 'bg-yellow-500' },
-            { label: 'Evaluated',  value: stats.evaluated,   dot: 'bg-purple-500' },
-            { label: 'Approved',   value: stats.approved,    dot: 'bg-green-500' },
-            { label: 'Rejected',   value: stats.rejected,    dot: 'bg-red-500' },
-            { label: 'Posted',     value: stats.posted,      dot: 'bg-emerald-500' },
-          ].map(({ label, value, dot }) => (
+            { label: 'Total',      value: stats.total,      dot: 'bg-muted-foreground', auto: 0 },
+            { label: 'New',        value: stats.new,         dot: 'bg-blue-500', auto: 0 },
+            { label: 'Evaluating', value: stats.evaluating,  dot: 'bg-yellow-500', auto: 0 },
+            { label: 'Evaluated',  value: stats.evaluated,   dot: 'bg-purple-500', auto: 0 },
+            { label: 'Approved',   value: stats.approved,    dot: 'bg-green-500', auto: stats.autoApproved },
+            { label: 'Rejected',   value: stats.rejected,    dot: 'bg-red-500', auto: 0 },
+            { label: 'Posted',     value: stats.posted,      dot: 'bg-emerald-500', auto: stats.autoPosted },
+          ].map(({ label, value, dot, auto }) => (
             <Card key={label}>
               <CardContent className="p-3 text-center">
                 <div className="text-2xl font-bold tracking-tight text-foreground">{value}</div>
@@ -513,6 +519,12 @@ export default function Dashboard() {
                   <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
                   {label}
                 </div>
+                {auto > 0 && (
+                  <div className="flex items-center justify-center gap-1 mt-1">
+                    <Zap className="w-3 h-3 text-amber-400" />
+                    <span className="text-[10px] text-amber-400 font-medium">{auto} auto</span>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -665,7 +677,7 @@ export default function Dashboard() {
                     {enabledPlatforms.length > 0
                       ? enabledPlatforms.map((p) => PLATFORM_MAP[p]?.label ?? p).join(', ')
                       : 'all platforms'}
-                    , then evaluates every new post in one click.
+                    , evaluates new posts, auto-approves high scorers, and auto-posts approved replies.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -733,12 +745,13 @@ export default function Dashboard() {
                   className={!pipelineResult.errors.length ? 'border-green-500/30 bg-green-500/10' : ''}>
                   <AlertTitle>{pipelineResult.errors.length ? 'Job complete with errors' : 'Job complete'}</AlertTitle>
                   <AlertDescription>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mt-2">
                       {[
                         { label: 'Scraped',   value: pipelineResult.scraped },
                         { label: 'New Posts', value: pipelineResult.newPosts },
                         { label: 'Evaluated', value: pipelineResult.evaluated },
                         { label: 'Auto-Approved', value: pipelineResult.autoApproved || 0 },
+                        { label: 'Auto-Posted', value: pipelineResult.autoPosted || 0 },
                         { label: 'Skipped',   value: pipelineResult.skipped },
                       ].map(({ label, value }) => (
                         <div key={label} className="bg-card/70 rounded p-2 text-center border border-border">

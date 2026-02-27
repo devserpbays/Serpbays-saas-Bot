@@ -14,6 +14,7 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import {
   Settings, X, Plus, Minus, Loader2, Check, UserPlus, Sparkles, FlaskConical,
+  Zap, Timer, Globe, Calendar,
 } from 'lucide-react';
 
 interface SettingsPanelProps {
@@ -119,6 +120,7 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
     competitors: [], competitorAlertThreshold: 60,
     abTestingEnabled: true, abVariationCount: 3,
     abTonePresets: ['helpful', 'professional', 'witty'], abAutoOptimize: false,
+    platformSchedules: {},
   });
   const [keywordInput, setKeywordInput] = useState('');
   const [subredditInput, setSubredditInput] = useState('');
@@ -150,6 +152,7 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
             socialAccounts: data.settings.socialAccounts ?? [],
             competitors: data.settings.competitors ?? [],
             abTonePresets: data.settings.abTonePresets ?? ['helpful', 'professional', 'witty'],
+            platformSchedules: data.settings.platformSchedules ?? {},
           });
         });
 
@@ -172,7 +175,7 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
     });
     const data = await res.json();
     if (data.settings) {
-      setSettings({ ...data.settings, socialAccounts: data.settings.socialAccounts ?? [], competitors: data.settings.competitors ?? [], abTonePresets: data.settings.abTonePresets ?? ['helpful', 'professional', 'witty'] });
+      setSettings({ ...data.settings, socialAccounts: data.settings.socialAccounts ?? [], competitors: data.settings.competitors ?? [], abTonePresets: data.settings.abTonePresets ?? ['helpful', 'professional', 'witty'], platformSchedules: data.settings.platformSchedules ?? {} });
       setMessage('Settings saved!');
       setTimeout(() => setMessage(''), 2000);
     }
@@ -292,6 +295,50 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
     }
   };
 
+  // Dynamic per-platform field helpers
+  const getPlatformField = (platformId: string, field: string): number => {
+    const key = `${platformId}${field}` as keyof ISettings;
+    return (settings[key] as number) ?? (field === 'AutoPostThreshold' ? 70 : 5);
+  };
+
+  const setPlatformField = (platformId: string, field: string, value: number) => {
+    const key = `${platformId}${field}`;
+    setSettings({ ...settings, [key]: value });
+  };
+
+  // Schedule state — apply a single schedule to all enabled platforms
+  const getSchedule = () => {
+    const schedules = settings.platformSchedules || {};
+    const first = Object.values(schedules)[0];
+    return {
+      timezone: first?.timezone || 'Asia/Kolkata',
+      days: first?.days || [1, 2, 3, 4, 5],
+      startHour: first?.startHour ?? 9,
+      endHour: first?.endHour ?? 18,
+      cronInterval: first?.cronInterval || '*/15 * * * *',
+    };
+  };
+
+  const setSchedule = (updates: Partial<ReturnType<typeof getSchedule>>) => {
+    const current = getSchedule();
+    const merged = { ...current, ...updates };
+    // Apply to all enabled platforms
+    const schedules: Record<string, typeof merged> = {};
+    for (const p of (settings.platforms || [])) {
+      schedules[p] = merged;
+    }
+    setSettings({ ...settings, platformSchedules: schedules });
+  };
+
+  const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const CRON_OPTIONS = [
+    { label: 'Every 5 min', value: '*/5 * * * *' },
+    { label: 'Every 10 min', value: '*/10 * * * *' },
+    { label: 'Every 15 min', value: '*/15 * * * *' },
+    { label: 'Every 30 min', value: '*/30 * * * *' },
+    { label: 'Every 60 min', value: '*/60 * * * *' },
+  ];
+
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
       <SheetContent className="w-full sm:max-w-lg overflow-y-auto p-0">
@@ -398,6 +445,43 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
                     <AddAccountForm platform={platform} nextIndex={nextIndexForPlatform(platform.id)}
                       onSuccess={handleAccountAdded} onCancel={() => setOpenForms((prev) => ({ ...prev, [platform.id]: false }))} />
                   )}
+
+                  {/* Per-platform threshold + daily limit */}
+                  {enabled && (
+                    <div className="mt-3 pt-3 border-t border-border/50 grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs flex items-center gap-1.5">
+                          <Zap className="w-3 h-3 text-amber-400" />
+                          Auto-Approve Threshold
+                        </Label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="range" min={0} max={100}
+                            value={getPlatformField(platform.id, 'AutoPostThreshold')}
+                            onChange={(e) => setPlatformField(platform.id, 'AutoPostThreshold', parseInt(e.target.value))}
+                            className="w-full accent-amber-500" disabled={!canEdit}
+                          />
+                          <span className="text-xs font-bold text-foreground w-8 text-right">
+                            {getPlatformField(platform.id, 'AutoPostThreshold')}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">Posts scoring above this are auto-approved</p>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs flex items-center gap-1.5">
+                          <Timer className="w-3 h-3 text-blue-400" />
+                          Daily Post Limit
+                        </Label>
+                        <Input
+                          type="number" min={0} max={100}
+                          value={getPlatformField(platform.id, 'DailyLimit')}
+                          onChange={(e) => setPlatformField(platform.id, 'DailyLimit', parseInt(e.target.value) || 0)}
+                          className="h-8 text-xs" disabled={!canEdit}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Max auto-posts per day for this platform</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -503,8 +587,116 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
             </div>
           </TabsContent>
 
-          {/* Advanced Tab (A/B Testing + Team) */}
+          {/* Advanced Tab (Schedule + A/B Testing + Team) */}
           <TabsContent value="advanced" className="space-y-5 mt-4">
+            {/* Schedule & Automation */}
+            <div className="border border-border rounded-xl p-4 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-emerald-400" />
+                Schedule & Automation
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Configure when the scheduler runs. These settings apply to all enabled platforms.
+              </p>
+
+              {/* Timezone */}
+              <div className="space-y-1">
+                <Label className="text-xs flex items-center gap-1.5">
+                  <Globe className="w-3 h-3 text-muted-foreground" />
+                  Timezone
+                </Label>
+                <select
+                  value={getSchedule().timezone}
+                  onChange={(e) => setSchedule({ timezone: e.target.value })}
+                  className="w-full border border-border bg-background rounded-md px-2 py-2 text-xs"
+                  disabled={!canEdit}
+                >
+                  <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+                  <option value="America/New_York">America/New_York (EST)</option>
+                  <option value="America/Chicago">America/Chicago (CST)</option>
+                  <option value="America/Denver">America/Denver (MST)</option>
+                  <option value="America/Los_Angeles">America/Los_Angeles (PST)</option>
+                  <option value="Europe/London">Europe/London (GMT)</option>
+                  <option value="Europe/Berlin">Europe/Berlin (CET)</option>
+                  <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+                  <option value="Asia/Shanghai">Asia/Shanghai (CST)</option>
+                  <option value="Australia/Sydney">Australia/Sydney (AEST)</option>
+                  <option value="UTC">UTC</option>
+                </select>
+              </div>
+
+              {/* Active Days */}
+              <div className="space-y-1">
+                <Label className="text-xs">Active Days</Label>
+                <div className="flex gap-1.5">
+                  {DAY_LABELS.map((day, i) => {
+                    const active = getSchedule().days.includes(i);
+                    return (
+                      <button
+                        key={day}
+                        onClick={() => {
+                          const days = getSchedule().days;
+                          setSchedule({
+                            days: active ? days.filter(d => d !== i) : [...days, i].sort(),
+                          });
+                        }}
+                        disabled={!canEdit}
+                        className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                          active
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted text-muted-foreground hover:bg-accent'
+                        }`}
+                      >
+                        {day}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Active Hours */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Start Hour</Label>
+                  <Input
+                    type="number" min={0} max={23}
+                    value={getSchedule().startHour}
+                    onChange={(e) => setSchedule({ startHour: parseInt(e.target.value) || 0 })}
+                    className="h-8 text-xs" disabled={!canEdit}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">End Hour</Label>
+                  <Input
+                    type="number" min={0} max={23}
+                    value={getSchedule().endHour}
+                    onChange={(e) => setSchedule({ endHour: parseInt(e.target.value) || 18 })}
+                    className="h-8 text-xs" disabled={!canEdit}
+                  />
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Scheduler only runs between these hours (24h format, in selected timezone)</p>
+
+              {/* Cron Interval */}
+              <div className="space-y-1">
+                <Label className="text-xs flex items-center gap-1.5">
+                  <Timer className="w-3 h-3 text-muted-foreground" />
+                  Run Frequency
+                </Label>
+                <select
+                  value={getSchedule().cronInterval}
+                  onChange={(e) => setSchedule({ cronInterval: e.target.value })}
+                  className="w-full border border-border bg-background rounded-md px-2 py-2 text-xs"
+                  disabled={!canEdit}
+                >
+                  {CRON_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-muted-foreground">How often the pipeline runs when the scheduler is active</p>
+              </div>
+            </div>
+
             {/* A/B Testing */}
             <div className="border border-border rounded-xl p-4 space-y-3">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">

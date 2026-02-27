@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  Check, X, Pencil, Send, Copy, ExternalLink, Loader2, CheckCircle2,
+  Check, X, Pencil, Send, Copy, ExternalLink, Loader2, CheckCircle2, Zap,
 } from 'lucide-react';
 
 interface PostCardProps {
@@ -88,8 +88,12 @@ export default function PostCard({ post, onUpdate, role = 'owner' }: PostCardPro
 
   return (
     <Card className={
-      post.status === 'posted'
+      post.status === 'posted' && post.autoPosted
+        ? 'border-cyan-500/30'
+        : post.status === 'posted'
         ? 'border-emerald-500/30'
+        : post.status === 'approved' && post.autoApproved
+        ? 'border-amber-500/30'
         : post.status === 'approved'
         ? 'border-green-500/30'
         : ''
@@ -102,6 +106,18 @@ export default function PostCard({ post, onUpdate, role = 'owner' }: PostCardPro
               <PlatformIcon platform={post.platform} />
               <span className="font-semibold text-foreground truncate">{post.author}</span>
               <StatusBadge status={post.status} />
+              {post.autoApproved && (
+                <Badge variant="outline" className="bg-amber-500/15 text-amber-400 border-amber-500/30 gap-1">
+                  <Zap className="w-3 h-3" />
+                  Auto
+                </Badge>
+              )}
+              {post.autoPosted && (
+                <Badge variant="outline" className="bg-cyan-500/15 text-cyan-400 border-cyan-500/30 gap-1">
+                  <Zap className="w-3 h-3" />
+                  Auto-Posted
+                </Badge>
+              )}
               {post.aiRelevanceScore !== undefined && (
                 <Badge variant="outline" className={
                   post.aiRelevanceScore >= 70 ? 'bg-green-500/15 text-green-400 border-green-500/30' :
@@ -129,8 +145,8 @@ export default function PostCard({ post, onUpdate, role = 'owner' }: PostCardPro
             <p className="text-xs text-muted-foreground">
               {new Date(post.scrapedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
               {post.status === 'posted' && post.postedAt && (
-                <span className="ml-2 text-emerald-400 font-medium">
-                  Posted {new Date(post.postedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                <span className={`ml-2 font-medium ${post.autoPosted ? 'text-cyan-400' : 'text-emerald-400'}`}>
+                  {post.autoPosted ? 'Auto-posted' : 'Posted'} {new Date(post.postedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                 </span>
               )}
             </p>
@@ -227,10 +243,14 @@ export default function PostCard({ post, onUpdate, role = 'owner' }: PostCardPro
               }`}>
                 <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{editedReply || replyText}</p>
                 {post.status === 'posted' && post.postedAt && (
-                  <div className="flex items-center gap-2 mt-2 pt-2 border-t border-emerald-500/20">
-                    <Send className="w-3.5 h-3.5 text-emerald-400" />
-                    <p className="text-xs text-emerald-400 font-medium">
-                      Posted {new Date(post.postedAt).toLocaleString()}
+                  <div className={`flex items-center gap-2 mt-2 pt-2 border-t ${post.autoPosted ? 'border-cyan-500/20' : 'border-emerald-500/20'}`}>
+                    {post.autoPosted ? (
+                      <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                    ) : (
+                      <Send className="w-3.5 h-3.5 text-emerald-400" />
+                    )}
+                    <p className={`text-xs font-medium ${post.autoPosted ? 'text-cyan-400' : 'text-emerald-400'}`}>
+                      {post.autoPosted ? 'Auto-posted' : 'Posted'} {new Date(post.postedAt).toLocaleString()}
                       {post.postedTone && <span className="opacity-80"> &middot; {post.postedTone} tone</span>}
                     </p>
                     {post.replyUrl && (
@@ -254,8 +274,11 @@ export default function PostCard({ post, onUpdate, role = 'owner' }: PostCardPro
         {/* Posted variations display */}
         {hasVariations && post.status === 'posted' && (
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-foreground">Posted Reply</label>
-            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3.5">
+            <label className="text-sm font-semibold text-foreground flex items-center gap-2">
+              {post.autoPosted ? 'Auto-Posted Reply' : 'Posted Reply'}
+              {post.autoPosted && <Zap className="w-3.5 h-3.5 text-cyan-400" />}
+            </label>
+            <div className={`${post.autoPosted ? 'bg-cyan-500/10 border border-cyan-500/30' : 'bg-emerald-500/10 border border-emerald-500/30'} rounded-xl p-3.5`}>
               <div className="flex items-center gap-2 mb-2">
                 {post.selectedVariationIndex !== undefined && post.selectedVariationIndex >= 0 && (
                   <span className="w-6 h-6 rounded-full bg-emerald-500 text-white text-xs font-bold flex items-center justify-center">
@@ -274,17 +297,21 @@ export default function PostCard({ post, onUpdate, role = 'owner' }: PostCardPro
                   : post.aiReply}
               </p>
               {post.postedAt && (
-                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-emerald-500/20">
-                  <Send className="w-3.5 h-3.5 text-emerald-400" />
-                  <p className="text-xs text-emerald-400 font-medium">
-                    Posted {new Date(post.postedAt).toLocaleString()}
+                <div className={`flex items-center gap-2 mt-2 pt-2 border-t ${post.autoPosted ? 'border-cyan-500/20' : 'border-emerald-500/20'}`}>
+                  {post.autoPosted ? (
+                    <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5 text-emerald-400" />
+                  )}
+                  <p className={`text-xs font-medium ${post.autoPosted ? 'text-cyan-400' : 'text-emerald-400'}`}>
+                    {post.autoPosted ? 'Auto-posted' : 'Posted'} {new Date(post.postedAt).toLocaleString()}
                   </p>
                   {post.replyUrl && (
                     <a
                       href={post.replyUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="ml-auto text-xs font-medium text-emerald-400 hover:text-emerald-300 underline flex items-center gap-1"
+                      className={`ml-auto text-xs font-medium underline flex items-center gap-1 ${post.autoPosted ? 'text-cyan-400 hover:text-cyan-300' : 'text-emerald-400 hover:text-emerald-300'}`}
                     >
                       View reply
                       <ExternalLink className="w-3 h-3" />

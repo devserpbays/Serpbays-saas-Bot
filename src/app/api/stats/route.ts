@@ -33,6 +33,12 @@ export async function GET() {
     postedByPlatform[p] = platformCounts[platforms.length + i];
   });
 
+  // Auto counts
+  const [autoApprovedCount, autoPostedCount] = await Promise.all([
+    Post.countDocuments({ workspaceId: ctx.workspaceId, autoApproved: true }),
+    Post.countDocuments({ workspaceId: ctx.workspaceId, autoPosted: true }),
+  ]);
+
   // Competitor opportunities count
   const competitorOpportunities = await Post.countDocuments({
     workspaceId: ctx.workspaceId,
@@ -50,6 +56,8 @@ export async function GET() {
     byStatus,
     byPlatform,
     postedByPlatform,
+    autoApproved: autoApprovedCount,
+    autoPosted: autoPostedCount,
     competitorOpportunities,
     tonePerformance,
   });
