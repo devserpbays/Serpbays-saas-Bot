@@ -408,18 +408,6 @@ export default function Dashboard() {
   const isAnyActionRunning = scraping || evaluating || pipelineRunning;
   const canAct = userRole === 'owner' || userRole === 'editor';
 
-  // DEBUG: remove after testing onboarding
-  console.log('[Onboarding Debug]', {
-    activeWorkspace: !!activeWorkspace,
-    statsTotal: stats.total,
-    companyName,
-    companyDescription,
-    keywords,
-    enabledPlatforms,
-    socialAccounts: socialAccounts.length,
-    showChecklist: !!activeWorkspace && stats.total === 0,
-  });
-
   const visiblePlatforms = PLATFORMS.filter(
     (p) => enabledPlatforms.includes(p.id) || (stats.byPlatform[p.id] ?? 0) > 0
   );
