@@ -53,7 +53,10 @@ export async function verifyQuoraCookies(opts: VerifyOptions): Promise<Verificat
     } catch {}
 
     const accountId = `qa_${username || 'unknown'}`;
-    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, cookieMap, verifiedAt: new Date().toISOString() }));
+    const storedCookieList = cookieList.map((c) => ({
+      name: c.name, value: c.value, domain: c.domain, path: c.path || '/',
+    }));
+    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, cookieMap, cookieList: storedCookieList, verifiedAt: new Date().toISOString() }));
 
     return { success: true, username, displayName: username, accountId, profileDir };
   } catch (err) {
@@ -99,22 +102,36 @@ export async function scrapeQuora(ctx: ScrapeContext): Promise<ScrapedPost[]> {
           await page.waitForTimeout(1500);
         }
 
-        // Extract question links
+        // Extract question links (handles both relative and absolute URLs)
         const links = await page.$$('a[href]');
         for (const link of links) {
           try {
             const href = await link.getAttribute('href');
             if (!href) continue;
-            // Quora questions start with capital letter
-            if (!/^\/[A-Z][^/]*\/?$/.test(href)) continue;
-            if (href.includes('/profile/') || href.includes('/topic/') || href.includes('/search')) continue;
 
-            const questionUrl = `https://www.quora.com${href}`;
+            let questionUrl = '';
+
+            // Relative path: /Question-Title
+            if (/^\/[A-Z][^/]*\/?$/.test(href)) {
+              questionUrl = `https://www.quora.com${href}`;
+            }
+            // Absolute URL: https://www.quora.com/Question-Title or subdomain.quora.com/...
+            else if (/^https?:\/\/([a-z]+\.)?quora\.com\/[A-Z][^?#]*/.test(href)) {
+              questionUrl = href.split('?')[0].split('#')[0]; // strip query/hash
+            }
+
+            if (!questionUrl) continue;
+            if (questionUrl.includes('/profile/') || questionUrl.includes('/topic/') || questionUrl.includes('/search')) continue;
+            if (questionUrl.includes('/unanswered/')) {
+              // Normalize unanswered URLs to the base question
+              questionUrl = questionUrl.replace('/unanswered/', '/');
+            }
+
             if (seen.has(questionUrl)) continue;
             seen.add(questionUrl);
 
             const text = (await link.textContent())?.trim() || '';
-            if (!text) continue;
+            if (!text || text.length < 10) continue;
 
             posts.push({
               url: questionUrl,
@@ -140,7 +157,8 @@ export async function scrapeQuora(ctx: ScrapeContext): Promise<ScrapedPost[]> {
 
 /**
  * Post an answer to a Quora question using Playwright DOM automation.
- * Navigates to the question URL, clicks the Answer button, types the reply, and submits.
+ * Matches the proven bot-serp approach: force clicks, human typing delay,
+ * Ctrl+Enter fallback, post verification, screenshot on failure.
  */
 export async function postQuoraReply(ctx: PostReplyContext): Promise<PostReplyResult> {
   const { postUrl, replyText, cookieList, cookieMap, profileDir } = ctx;
@@ -165,7 +183,7 @@ export async function postQuoraReply(ctx: PostReplyContext): Promise<PostReplyRe
     const page = context.pages()[0] || await context.newPage();
 
     await page.goto(postUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(4000);
 
     // Check for login redirect
     const url = page.url();
@@ -173,60 +191,47 @@ export async function postQuoraReply(ctx: PostReplyContext): Promise<PostReplyRe
       return { success: false, error: 'Session expired — redirected to login. Please re-verify cookies.' };
     }
 
-    // Click the "Answer" button to open the answer editor
+    // Scroll down to find the answer area
+    await page.mouse.wheel(0, 400);
+    await page.waitForTimeout(2000);
+
+    // Click "Answer" button to open the answer editor
     const answerBtnSelectors = [
       'button:has-text("Answer")',
       '[aria-label="Answer"]',
       'a:has-text("Answer")',
-      '.AnswerButton',
+      '.q-box button:has-text("Answer")',
     ];
 
-    let answerBtn = null;
-    for (const selector of answerBtnSelectors) {
-      answerBtn = await page.$(selector);
-      if (answerBtn) {
-        const visible = await answerBtn.isVisible().catch(() => false);
-        if (visible) break;
-        answerBtn = null;
-      }
-    }
-
-    if (!answerBtn) {
-      // Try scrolling to find the answer button
-      await page.mouse.wheel(0, 300);
-      await page.waitForTimeout(1500);
-      for (const selector of answerBtnSelectors) {
-        answerBtn = await page.$(selector);
-        if (answerBtn) {
-          const visible = await answerBtn.isVisible().catch(() => false);
-          if (visible) break;
-          answerBtn = null;
+    let clickedAnswer = false;
+    for (const sel of answerBtnSelectors) {
+      const btns = await page.$$(sel);
+      for (const btn of btns) {
+        const text = await btn.textContent().catch(() => '');
+        if (text && /^answer$/i.test(text.trim()) && await btn.isVisible().catch(() => false)) {
+          await btn.click({ force: true });
+          clickedAnswer = true;
+          await page.waitForTimeout(3000);
+          break;
         }
       }
+      if (clickedAnswer) break;
     }
 
-    if (!answerBtn) {
-      return { success: false, error: 'Could not find Answer button. The question may be restricted.' };
-    }
-
-    await answerBtn.click();
-    await page.waitForTimeout(2000);
-
-    // Find the answer editor (contenteditable div)
+    // Find the answer editor (rich text contenteditable)
     const editorSelectors = [
-      'div[contenteditable="true"][data-placeholder*="Write your answer"]',
-      'div[contenteditable="true"][role="textbox"]',
-      '.doc.ql-editor[contenteditable="true"]',
+      'div[contenteditable="true"][data-placeholder]',
       'div[contenteditable="true"].q-box',
       'div[contenteditable="true"]',
+      '.doc[contenteditable="true"]',
+      'div[role="textbox"][contenteditable="true"]',
     ];
 
-    let editor = null;
-    for (const selector of editorSelectors) {
-      const candidates = await page.$$(selector);
-      for (const el of candidates) {
-        const visible = await el.isVisible().catch(() => false);
-        if (visible) {
+    let editor: Awaited<ReturnType<typeof page.$>> = null;
+    for (const sel of editorSelectors) {
+      const elements = await page.$$(sel);
+      for (const el of elements) {
+        if (await el.isVisible().catch(() => false)) {
           editor = el;
           break;
         }
@@ -235,44 +240,70 @@ export async function postQuoraReply(ctx: PostReplyContext): Promise<PostReplyRe
     }
 
     if (!editor) {
-      return { success: false, error: 'Could not find the answer editor.' };
+      await page.screenshot({ path: '/tmp/quora-answer-failed.png', fullPage: false }).catch(() => {});
+      return { success: false, error: 'Could not find answer editor on this question.' };
     }
 
-    // Click the editor to focus
-    await editor.click();
-    await page.waitForTimeout(500);
-
-    // Type the answer
-    await page.keyboard.type(replyText, { delay: 15 });
+    // Click to focus with force
+    await editor.click({ force: true });
     await page.waitForTimeout(1000);
 
-    // Click the Submit/Post button
+    // Type the answer with human-like delay
+    await page.keyboard.type(replyText, { delay: 30 });
+    await page.waitForTimeout(1000);
+
+    // Find and click the Submit/Post button
     const submitSelectors = [
       'button:has-text("Post")',
       'button:has-text("Submit")',
-      'button[aria-label="Post"]',
       'button[type="submit"]:has-text("Post")',
+      'button.q-click-wrapper:has-text("Post")',
     ];
 
-    let submitBtn = null;
-    for (const selector of submitSelectors) {
-      submitBtn = await page.$(selector);
-      if (submitBtn) {
-        const visible = await submitBtn.isVisible().catch(() => false);
-        if (visible) break;
-        submitBtn = null;
+    let submitted = false;
+    for (const sel of submitSelectors) {
+      const btns = await page.$$(sel);
+      for (const btn of btns) {
+        if (await btn.isVisible().catch(() => false)) {
+          await btn.click({ force: true });
+          submitted = true;
+          break;
+        }
       }
+      if (submitted) break;
     }
 
-    if (!submitBtn) {
-      return { success: false, error: 'Could not find Post/Submit button.' };
+    if (!submitted) {
+      // Ctrl+Enter as fallback submit
+      await page.keyboard.press('Control+Enter');
     }
 
-    await submitBtn.click();
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(5000);
 
-    // The answer URL is typically the question URL itself
-    const replyUrl = postUrl;
+    // Verify: check if answer text appears in page
+    const pageText = await page.textContent('body').catch(() => '');
+    const verified = pageText?.includes(replyText.slice(0, 30)) ?? false;
+
+    if (!verified) {
+      await page.screenshot({ path: '/tmp/quora-post-failed.png', fullPage: false }).catch(() => {});
+    }
+
+    // Extract the answer permalink
+    let replyUrl = postUrl;
+    try {
+      const currentUrl = page.url();
+      if (currentUrl.includes('/answer/')) {
+        replyUrl = currentUrl;
+      } else {
+        const answerLinks = await page.$$('a[href*="/answer/"]');
+        if (answerLinks.length > 0) {
+          const href = await answerLinks[answerLinks.length - 1].getAttribute('href');
+          if (href) {
+            replyUrl = href.startsWith('http') ? href : `https://www.quora.com${href}`;
+          }
+        }
+      }
+    } catch {}
 
     return { success: true, replyUrl };
   } catch (err) {

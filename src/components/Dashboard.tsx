@@ -20,9 +20,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   Settings, LogOut, Clock, Play, Loader2, ChevronDown, ChevronLeft,
-  ChevronRight, Plus, AlertTriangle, TrendingUp, TrendingDown, Minus,
-  FlaskConical, BarChart3, FileText, Timer, Square, Zap,
+  ChevronRight, ChevronUp, Plus, AlertTriangle, TrendingUp, TrendingDown, Minus,
+  FlaskConical, BarChart3, FileText, Timer, Square, Zap, Check, X,
   ShieldCheck, ShieldAlert, ShieldX, ShieldOff, RefreshCw, UserCircle,
+  Search, Send, ArrowRight, ExternalLink, MessageSquare,
 } from 'lucide-react';
 
 interface PostsResponse {
@@ -138,6 +139,10 @@ export default function Dashboard() {
   const [cookieHealth, setCookieHealth] = useState<AccountHealth[]>([]);
   const [healthSummary, setHealthSummary] = useState<Record<CookieHealthStatus, number>>({ healthy: 0, stale: 0, missing: 0, invalid: 0 });
 
+  const [reviewPosts, setReviewPosts] = useState<IPost[]>([]);
+  const [reviewExpanded, setReviewExpanded] = useState(true);
+  const [reviewBulkLoading, setReviewBulkLoading] = useState(false);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchWorkspaces = useCallback(async () => {
@@ -239,6 +244,14 @@ export default function Dashboard() {
     } catch {/* silent */}
   }, []);
 
+  const fetchReviewQueue = useCallback(async () => {
+    try {
+      const res = await fetch('/api/posts?status=evaluated&limit=50');
+      const data: PostsResponse = await res.json();
+      setReviewPosts(data.posts || []);
+    } catch {/* silent */}
+  }, []);
+
   const handleSchedulerToggle = async () => {
     setSchedulerToggling(true);
     try {
@@ -268,8 +281,9 @@ export default function Dashboard() {
       fetchKeywordMetrics();
       fetchSchedulerStatus();
       fetchCookieHealth();
+      fetchReviewQueue();
     }
-  }, [activeWorkspace, fetchPosts, fetchStats, fetchSettings, fetchKeywordMetrics, fetchSchedulerStatus, fetchCookieHealth]);
+  }, [activeWorkspace, fetchPosts, fetchStats, fetchSettings, fetchKeywordMetrics, fetchSchedulerStatus, fetchCookieHealth, fetchReviewQueue]);
 
   useEffect(() => {
     if (!activeWorkspace) return;
@@ -277,9 +291,10 @@ export default function Dashboard() {
       fetchStats();
       fetchPosts();
       fetchSchedulerStatus();
+      fetchReviewQueue();
     }, POLL_INTERVAL_MS);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [activeWorkspace, fetchStats, fetchPosts, fetchSchedulerStatus]);
+  }, [activeWorkspace, fetchStats, fetchPosts, fetchSchedulerStatus, fetchReviewQueue]);
 
   // Handle deep-link from profile page: ?openSettings=platforms
   useEffect(() => {
@@ -418,6 +433,36 @@ export default function Dashboard() {
     });
     fetchPosts();
     fetchStats();
+    fetchReviewQueue();
+  };
+
+  const handleReviewAction = async (id: string, status: 'approved' | 'rejected') => {
+    setReviewPosts((prev) => prev.filter((p) => p._id !== id));
+    await fetch('/api/posts', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, status }),
+    });
+    fetchStats();
+    fetchPosts();
+  };
+
+  const handleBulkReview = async (status: 'approved' | 'rejected') => {
+    setReviewBulkLoading(true);
+    const ids = reviewPosts.map((p) => p._id).filter(Boolean) as string[];
+    setReviewPosts([]);
+    await Promise.all(
+      ids.map((id) =>
+        fetch('/api/posts', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, status }),
+        })
+      )
+    );
+    fetchStats();
+    fetchPosts();
+    setReviewBulkLoading(false);
   };
 
   const totalPages = Math.ceil(total / 20);
@@ -455,7 +500,7 @@ export default function Dashboard() {
       <header className="bg-card border-b border-border sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold text-foreground tracking-tight">Serpbays</h1>
+            <h1 className="text-xl font-bold text-foreground tracking-tight">GetMention</h1>
             <Badge variant="outline" className="bg-green-500/15 text-green-400 border-green-500/30 text-[10px] gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
               Live
@@ -696,7 +741,7 @@ export default function Dashboard() {
                       {healthIcon(health.status)}
                     </span>
                   )}
-                  {accounts.length > 0 && (
+                  {accounts.length > 0 ? (
                     <span className="flex items-center -space-x-1 ml-0.5">
                       {accounts.slice(0, 3).map((acc) => (
                         <span
@@ -713,6 +758,14 @@ export default function Dashboard() {
                         </span>
                       )}
                     </span>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] px-1.5 border-dashed border-amber-500/40 text-amber-400 cursor-pointer"
+                      onClick={(e) => { e.stopPropagation(); handleOpenSettingsToTab('platforms'); }}
+                    >
+                      <Plus className="w-2.5 h-2.5" /> Connect
+                    </Badge>
                   )}
                 </Button>
               );
@@ -723,6 +776,328 @@ export default function Dashboard() {
               </Button>
             )}
           </div>
+        )}
+
+        {/* AI Autopilot */}
+        {canAct && (
+          <Card className="overflow-hidden">
+            <div className="bg-gradient-to-r from-violet-600/20 via-blue-600/20 to-cyan-600/20 border-b border-border px-5 py-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-amber-500/15">
+                  <Zap className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-foreground">AI Autopilot</h2>
+                  <p className="text-xs text-muted-foreground">Automated scraping, evaluation, and posting pipeline</p>
+                </div>
+              </div>
+            </div>
+            <CardContent className="p-5 space-y-5">
+              {/* 4-step pipeline flow */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { step: 1, label: 'Scrape', desc: 'Find posts across platforms', icon: Search, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
+                  { step: 2, label: 'Evaluate', desc: 'AI scores relevance', icon: FlaskConical, color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
+                  { step: 3, label: 'Auto-Approve', desc: 'Above threshold → approved', icon: Check, color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
+                  { step: 4, label: 'Auto-Post', desc: 'Comments posted automatically', icon: Send, color: 'text-green-400', bg: 'bg-green-500/10', border: 'border-green-500/20' },
+                ].map(({ step, label, desc, icon: Icon, color, bg, border }) => (
+                  <div key={step} className={`relative rounded-lg border ${border} ${bg} p-3 text-center`}>
+                    <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">Step {step}</div>
+                    <Icon className={`w-5 h-5 ${color} mx-auto mb-1`} />
+                    <div className="text-sm font-semibold text-foreground">{label}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{desc}</div>
+                    {step < 4 && (
+                      <ArrowRight className="hidden md:block absolute -right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/40 z-10" />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Setup readiness */}
+              <div className="flex items-center gap-4 flex-wrap text-xs">
+                <span className="text-muted-foreground font-medium">Setup:</span>
+                {[
+                  { label: 'Company Name', ready: !!companyName, tab: 'general' },
+                  { label: 'Description', ready: !!companyDescription, tab: 'general' },
+                  { label: 'Keywords', ready: keywords.length > 0, tab: 'general' },
+                  { label: 'Platforms', ready: enabledPlatforms.length > 0, tab: 'platforms' },
+                  { label: 'Accounts', ready: socialAccounts.length > 0, tab: 'platforms' },
+                ].map(({ label, ready, tab }) => (
+                  <span
+                    key={label}
+                    className={`flex items-center gap-1 ${ready ? 'text-green-400' : 'text-muted-foreground cursor-pointer hover:text-amber-400'}`}
+                    onClick={() => !ready && handleOpenSettingsToTab(tab)}
+                  >
+                    {ready ? <Check className="w-3 h-3" /> : <X className="w-3 h-3 text-muted-foreground/50" />}
+                    {label}
+                  </span>
+                ))}
+              </div>
+
+              {/* Start button + scheduler + manual actions */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <Button
+                  onClick={handleRunPipeline}
+                  disabled={isAnyActionRunning}
+                  size="lg"
+                  className="px-8"
+                >
+                  {pipelineRunning ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" />Running Pipeline...</>
+                  ) : (
+                    <><Play className="w-4 h-4" />Start Job</>
+                  )}
+                </Button>
+                <Button
+                  onClick={handleSchedulerToggle}
+                  disabled={schedulerToggling}
+                  size="sm"
+                  variant={scheduler?.running ? 'destructive' : 'outline'}
+                >
+                  {schedulerToggling ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : scheduler?.running ? (
+                    <><Square className="w-3.5 h-3.5" />Stop Scheduler</>
+                  ) : (
+                    <><Timer className="w-3.5 h-3.5" />Auto-Schedule</>
+                  )}
+                </Button>
+                <div className="ml-auto flex items-center gap-3 flex-wrap">
+                  <span className="text-xs font-medium text-muted-foreground">Manual:</span>
+                  <Button onClick={handleScrape} disabled={isAnyActionRunning} size="sm" variant="outline">
+                    {scraping ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Scraping...</> : <><Search className="w-3.5 h-3.5" />Scrape Only</>}
+                  </Button>
+                  <Button onClick={handleEvaluate} disabled={isAnyActionRunning} size="sm" variant="outline">
+                    {evaluating ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Evaluating...</> : <><FlaskConical className="w-3.5 h-3.5" />Evaluate Only</>}
+                  </Button>
+                </div>
+              </div>
+
+              {actionMessage && (
+                <span className={`text-sm ${actionMessage.startsWith('Error') ? 'text-destructive' : 'text-green-500'}`}>
+                  {actionMessage}
+                </span>
+              )}
+
+              {/* Scheduler status */}
+              {scheduler?.running && (
+                <div className="flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-2.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-sm font-medium text-emerald-400">Scheduler Active</span>
+                  <span className="text-xs text-emerald-400/70">
+                    Every {Math.round((scheduler.intervalMs || 900000) / 60000)} min
+                  </span>
+                  {scheduler.nextRunAt && (
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      Next: {new Date(scheduler.nextRunAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                  {scheduler.lastRunAt && (
+                    <span className="text-xs text-muted-foreground">
+                      Last: {new Date(scheduler.lastRunAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                  {scheduler.error && (
+                    <span className="text-xs text-destructive ml-2">{scheduler.error}</span>
+                  )}
+                </div>
+              )}
+
+              {/* Pipeline progress */}
+              {pipelineStep && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {pipelineStep}
+                </div>
+              )}
+
+              {/* Pipeline results */}
+              {pipelineResult && !pipelineRunning && (
+                <Alert variant={pipelineResult.errors.length ? 'destructive' : 'default'}
+                  className={!pipelineResult.errors.length ? 'border-green-500/30 bg-green-500/10' : ''}>
+                  <AlertTitle>{pipelineResult.errors.length ? 'Job complete with errors' : 'Job complete'}</AlertTitle>
+                  <AlertDescription>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mt-2">
+                      {[
+                        { label: 'Scraped', value: pipelineResult.scraped },
+                        { label: 'New Posts', value: pipelineResult.newPosts },
+                        { label: 'Evaluated', value: pipelineResult.evaluated },
+                        { label: 'Auto-Approved', value: pipelineResult.autoApproved || 0 },
+                        { label: 'Auto-Posted', value: pipelineResult.autoPosted || 0 },
+                        { label: 'Skipped', value: pipelineResult.skipped },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="bg-card/70 rounded p-2 text-center border border-border">
+                          <div className="text-lg font-bold text-foreground">{value}</div>
+                          <div className="text-xs text-muted-foreground">{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {pipelineResult.errors.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {pipelineResult.errors.map((e, i) => (
+                          <li key={i} className="text-destructive text-xs">{e}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Review Queue */}
+        {reviewPosts.length > 0 && (
+          <Card>
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-purple-400" />
+                    Review Queue
+                    <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 text-xs">
+                      {reviewPosts.length}
+                    </Badge>
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {reviewPosts.length} post{reviewPosts.length !== 1 ? 's' : ''} need{reviewPosts.length === 1 ? 's' : ''} review
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {canAct && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleBulkReview('rejected')}
+                        disabled={reviewBulkLoading}
+                        className="text-red-400 border-red-500/30 hover:bg-red-500/10"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Reject All
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleBulkReview('approved')}
+                        disabled={reviewBulkLoading}
+                        className="text-green-400 border-green-500/30 hover:bg-green-500/10"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        Accept All
+                      </Button>
+                    </>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setReviewExpanded(!reviewExpanded)}
+                    className="h-7 w-7"
+                  >
+                    {reviewExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </div>
+
+              {reviewExpanded && (
+                <div className="space-y-3">
+                  {reviewPosts.map((post) => {
+                    const score = post.aiRelevanceScore ?? 0;
+                    const borderColor = score >= 70 ? 'border-l-green-500'
+                      : score >= 40 ? 'border-l-amber-500'
+                      : 'border-l-red-500';
+                    const scoreColor = score >= 70 ? 'text-green-400 bg-green-500/15 border-green-500/30'
+                      : score >= 40 ? 'text-amber-400 bg-amber-500/15 border-amber-500/30'
+                      : 'text-red-400 bg-red-500/15 border-red-500/30';
+
+                    return (
+                      <div
+                        key={post._id}
+                        className={`rounded-lg border border-border ${borderColor} border-l-[3px] bg-card/50 hover:bg-card/80 transition-colors overflow-hidden`}
+                      >
+                        <div className="p-4">
+                          {/* Top row: platform, author, date, score */}
+                          <div className="flex items-center gap-2 mb-2">
+                            <PlatformIcon platform={post.platform} className="w-4 h-4" />
+                            <span className="text-xs font-medium text-foreground">{post.author}</span>
+                            {post.scrapedAt && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {new Date(post.scrapedAt).toLocaleDateString()}
+                              </span>
+                            )}
+                            <Badge variant="outline" className={`ml-auto shrink-0 text-xs font-bold ${scoreColor}`}>
+                              {score}/100
+                            </Badge>
+                          </div>
+
+                          {/* Content */}
+                          <p className="text-sm text-foreground/90 line-clamp-3 leading-relaxed mb-2">
+                            {post.content}
+                          </p>
+
+                          {/* AI Suggested Comment */}
+                          {post.aiReply && (
+                            <div className="bg-muted/50 rounded-md p-2.5 mb-2 border border-border/50">
+                              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">AI Suggested Comment</div>
+                              <p className="text-xs text-foreground/80 line-clamp-3 leading-relaxed">
+                                {post.aiReply}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Keywords + View original + Actions */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {post.keywordsMatched && post.keywordsMatched.length > 0 && (
+                              <div className="flex gap-1 flex-wrap">
+                                {post.keywordsMatched.slice(0, 3).map((kw) => (
+                                  <Badge key={kw} variant="secondary" className="text-[10px] px-1.5 py-0">
+                                    {kw}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                            {post.url && (
+                              <a
+                                href={post.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5 ml-auto"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                View original
+                              </a>
+                            )}
+                            {canAct && (
+                              <div className={`flex items-center gap-1.5 ${!post.url ? 'ml-auto' : ''}`}>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-red-400 border-red-500/30 hover:bg-red-500/10"
+                                  onClick={() => handleReviewAction(post._id!, 'rejected')}
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                  Reject
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-green-400 border-green-500/30 hover:bg-green-500/10"
+                                  onClick={() => handleReviewAction(post._id!, 'approved')}
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  Accept
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         )}
 
         {/* Keyword Performance */}
@@ -801,136 +1176,6 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
-        )}
-
-        {/* Run Full Pipeline */}
-        {canAct && (
-          <Card>
-            <CardContent className="p-5 space-y-4">
-              <div className="flex items-start justify-between flex-wrap gap-4">
-                <div>
-                  <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
-                    <Play className="w-4 h-4 text-muted-foreground" />
-                    Run Full Job
-                  </h2>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    Scrapes{' '}
-                    {enabledPlatforms.length > 0
-                      ? enabledPlatforms.map((p) => PLATFORM_MAP[p]?.label ?? p).join(', ')
-                      : 'all platforms'}
-                    , evaluates new posts, auto-approves high scorers, and auto-posts approved replies.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    onClick={handleSchedulerToggle}
-                    disabled={schedulerToggling}
-                    size="sm"
-                    variant={scheduler?.running ? 'destructive' : 'outline'}
-                  >
-                    {schedulerToggling ? (
-                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /></>
-                    ) : scheduler?.running ? (
-                      <><Square className="w-3.5 h-3.5" />Stop Scheduler</>
-                    ) : (
-                      <><Timer className="w-3.5 h-3.5" />Auto-Schedule</>
-                    )}
-                  </Button>
-                  <Button
-                    onClick={handleRunPipeline}
-                    disabled={isAnyActionRunning}
-                    size="lg"
-                  >
-                    {pipelineRunning ? (
-                      <><Loader2 className="w-4 h-4 animate-spin" />Running...</>
-                    ) : (
-                      <><Play className="w-4 h-4" />Start Job</>
-                    )}
-                  </Button>
-                </div>
-              </div>
-
-              {/* Scheduler Status */}
-              {scheduler?.running && (
-                <div className="flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-2.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-sm font-medium text-emerald-400">Scheduler Active</span>
-                  <span className="text-xs text-emerald-400/70">
-                    Every {Math.round((scheduler.intervalMs || 900000) / 60000)} min
-                  </span>
-                  {scheduler.nextRunAt && (
-                    <span className="text-xs text-muted-foreground ml-auto">
-                      Next run: {new Date(scheduler.nextRunAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  )}
-                  {scheduler.lastRunAt && (
-                    <span className="text-xs text-muted-foreground">
-                      Last: {new Date(scheduler.lastRunAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  )}
-                  {scheduler.error && (
-                    <span className="text-xs text-destructive ml-2">{scheduler.error}</span>
-                  )}
-                </div>
-              )}
-
-              {pipelineStep && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {pipelineStep}
-                </div>
-              )}
-
-              {pipelineResult && !pipelineRunning && (
-                <Alert variant={pipelineResult.errors.length ? 'destructive' : 'default'}
-                  className={!pipelineResult.errors.length ? 'border-green-500/30 bg-green-500/10' : ''}>
-                  <AlertTitle>{pipelineResult.errors.length ? 'Job complete with errors' : 'Job complete'}</AlertTitle>
-                  <AlertDescription>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mt-2">
-                      {[
-                        { label: 'Scraped',   value: pipelineResult.scraped },
-                        { label: 'New Posts', value: pipelineResult.newPosts },
-                        { label: 'Evaluated', value: pipelineResult.evaluated },
-                        { label: 'Auto-Approved', value: pipelineResult.autoApproved || 0 },
-                        { label: 'Auto-Posted', value: pipelineResult.autoPosted || 0 },
-                        { label: 'Skipped',   value: pipelineResult.skipped },
-                      ].map(({ label, value }) => (
-                        <div key={label} className="bg-card/70 rounded p-2 text-center border border-border">
-                          <div className="text-lg font-bold text-foreground">{value}</div>
-                          <div className="text-xs text-muted-foreground">{label}</div>
-                        </div>
-                      ))}
-                    </div>
-                    {pipelineResult.errors.length > 0 && (
-                      <ul className="mt-2 space-y-1">
-                        {pipelineResult.errors.map((e, i) => (
-                          <li key={i} className="text-destructive text-xs">{e}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Secondary Actions */}
-        {canAct && (
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Manual steps:</span>
-            <Button onClick={handleScrape} disabled={isAnyActionRunning} size="sm">
-              {scraping ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Scraping...</> : 'Scrape Only'}
-            </Button>
-            <Button onClick={handleEvaluate} disabled={isAnyActionRunning} size="sm" variant="secondary">
-              {evaluating ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Evaluating...</> : 'Evaluate Only'}
-            </Button>
-            {actionMessage && (
-              <span className={`text-sm ${actionMessage.startsWith('Error') ? 'text-destructive' : 'text-green-500'}`}>
-                {actionMessage}
-              </span>
-            )}
-          </div>
         )}
 
         {/* Status Filters */}

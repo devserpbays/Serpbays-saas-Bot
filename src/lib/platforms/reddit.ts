@@ -58,7 +58,10 @@ export async function verifyRedditCookies(opts: VerifyOptions): Promise<Verifica
     }
 
     const accountId = `rd_${username || 'unknown'}`;
-    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, cookieMap: opts.cookieMap, verifiedAt: new Date().toISOString() }));
+    const storedCookieList = opts.cookieList.map((c) => ({
+      name: c.name, value: c.value, domain: c.domain, path: c.path || '/',
+    }));
+    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, cookieMap: opts.cookieMap, cookieList: storedCookieList, verifiedAt: new Date().toISOString() }));
 
     return { success: true, username, displayName: username, accountId, profileDir };
   } catch (err) {
@@ -139,7 +142,7 @@ export async function scrapeReddit(ctx: ScrapeContext): Promise<ScrapedPost[]> {
 
 /**
  * Post a comment reply to a Reddit post using Playwright browser automation.
- * Navigates to the post, finds the comment box, types the reply, and submits.
+ * Uses new Reddit (www.reddit.com) directly — matches the proven bot-serp approach.
  */
 export async function postRedditReply(ctx: PostReplyContext): Promise<PostReplyResult> {
   const { postUrl, replyText, cookieList, profileDir } = ctx;
@@ -159,64 +162,141 @@ export async function postRedditReply(ctx: PostReplyContext): Promise<PostReplyR
     await context.addCookies(cookieList);
     const page = context.pages()[0] || await context.newPage();
 
-    // Navigate to the post on old.reddit.com for simpler DOM
-    const oldRedditUrl = postUrl.replace('www.reddit.com', 'old.reddit.com');
-    await page.goto(oldRedditUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
-    await page.waitForTimeout(3000);
+    // Use new Reddit directly (old Reddit redirects to new anyway)
+    const newRedditUrl = postUrl.replace('old.reddit.com', 'www.reddit.com');
+    await page.goto(newRedditUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
+    await page.waitForTimeout(4000);
 
-    // Check if logged in
-    const loginLink = await page.$('a.login-required');
-    const userBar = await page.$('span.user a[href*="/user/"]');
-    if (loginLink && !userBar) {
+    // Check for login redirect
+    const currentUrl = page.url();
+    if (currentUrl.includes('/login') || currentUrl.includes('/register')) {
       return { success: false, error: 'Not logged in on Reddit. Please re-verify your cookies.' };
     }
 
-    // Find the comment textarea on old reddit
-    const commentBox = await page.$('textarea[name="text"]');
+    // Scroll down to find the comment box
+    await page.mouse.wheel(0, 500);
+    await page.waitForTimeout(2000);
+
+    // Try multiple comment box selectors (new Reddit)
+    const commentSelectors = [
+      'shreddit-composer div[contenteditable="true"]',
+      'div[contenteditable="true"][data-lexical-editor]',
+      'div[contenteditable="true"][role="textbox"]',
+      'div[contenteditable="true"]',
+      'textarea[name="comment"]',
+      'textarea[placeholder*="comment" i]',
+      '.public-DraftEditor-content',
+    ];
+
+    let commentBox: Awaited<ReturnType<typeof page.$>> = null;
+    for (const sel of commentSelectors) {
+      const elements = await page.$$(sel);
+      for (const el of elements) {
+        if (await el.isVisible().catch(() => false)) {
+          commentBox = el;
+          break;
+        }
+      }
+      if (commentBox) break;
+    }
+
+    // If not found, try clicking placeholder to expand the comment editor
     if (!commentBox) {
+      const placeholderSelectors = [
+        'div[data-click-id="text"]',
+        '[placeholder*="comment" i]',
+        '[placeholder*="conversation" i]',
+        'span:has-text("Add a comment")',
+        'span:has-text("Join the conversation")',
+        'p:has-text("Join the conversation")',
+        'div:has-text("Join the conversation"):not(:has(div))',
+        'faceplate-tracker[noun="comment_composer"] div[role="textbox"]',
+        'shreddit-composer',
+      ];
+      for (const sel of placeholderSelectors) {
+        const phs = await page.$$(sel);
+        for (const ph of phs) {
+          if (await ph.isVisible().catch(() => false)) {
+            await ph.click({ force: true });
+            await page.waitForTimeout(2000);
+            break;
+          }
+        }
+        // Re-check for comment box after clicking placeholder
+        for (const cSel of commentSelectors) {
+          const elements = await page.$$(cSel);
+          for (const el of elements) {
+            if (await el.isVisible().catch(() => false)) {
+              commentBox = el;
+              break;
+            }
+          }
+          if (commentBox) break;
+        }
+        if (commentBox) break;
+      }
+    }
+
+    if (!commentBox) {
+      await page.screenshot({ path: '/tmp/reddit-comment-failed.png', fullPage: false }).catch(() => {});
       return { success: false, error: 'Could not find comment box. The post may be locked or archived.' };
     }
 
-    await commentBox.click();
-    await commentBox.fill(replyText);
-    await page.waitForTimeout(500);
+    // Click to focus with force
+    await commentBox.click({ force: true });
+    await page.waitForTimeout(1000);
 
-    // Click the save/submit button
-    const submitBtn = await page.$('button[type="submit"].save, button:has-text("save"), input[type="submit"][value="save"]');
-    if (!submitBtn) {
-      return { success: false, error: 'Could not find submit button for comment.' };
-    }
+    // Type the comment with human-like delay
+    await page.keyboard.type(replyText, { delay: 35 });
+    await page.waitForTimeout(1000);
 
-    await submitBtn.click();
-    await page.waitForTimeout(4000);
+    // Find and click the submit button
+    const submitSelectors = [
+      'button[type="submit"]:has-text("Comment")',
+      'button:has-text("Comment")',
+      'button[slot="submit-button"]',
+    ];
 
-    // Check for errors
-    const errorEl = await page.$('.error, .status-error');
-    if (errorEl) {
-      const errorText = (await errorEl.textContent())?.trim() || '';
-      if (errorText) {
-        return { success: false, error: `Reddit error: ${errorText}` };
+    let submitted = false;
+    for (const sel of submitSelectors) {
+      const btns = await page.$$(sel);
+      for (const btn of btns) {
+        const text = await btn.textContent().catch(() => '');
+        if (text && /comment/i.test(text.trim()) && await btn.isVisible().catch(() => false)) {
+          await btn.click({ force: true });
+          submitted = true;
+          break;
+        }
       }
+      if (submitted) break;
     }
 
-    // Try to extract the comment permalink
+    if (!submitted) {
+      // Ctrl+Enter as fallback submit
+      await page.keyboard.press('Control+Enter');
+    }
+
+    await page.waitForTimeout(5000);
+
+    // Verify: check if comment text appears in page
+    const pageText = await page.textContent('body').catch(() => '');
+    const verified = pageText?.includes(replyText.slice(0, 30)) ?? false;
+
+    if (!verified) {
+      await page.screenshot({ path: '/tmp/reddit-post-failed.png', fullPage: false }).catch(() => {});
+    }
+
+    // Extract reply URL
     let replyUrl = '';
     try {
-      // On old reddit, new comments appear with a permalink
-      const permalinks = await page.$$('.comment .bylink[href*="/comment/"], .comment a.bylink');
-      if (permalinks.length > 0) {
-        const lastPermalink = permalinks[permalinks.length - 1];
-        const href = await lastPermalink.getAttribute('href');
-        if (href) {
-          replyUrl = href.startsWith('http') ? href : `https://old.reddit.com${href}`;
-        }
+      const commentLinks = await page.$$('a[href*="/comment/"]');
+      if (commentLinks.length > 0) {
+        const href = await commentLinks[commentLinks.length - 1].getAttribute('href');
+        if (href) replyUrl = href.startsWith('http') ? href : `https://www.reddit.com${href}`;
       }
     } catch {}
 
-    // Fallback: use the post URL itself
-    if (!replyUrl) replyUrl = postUrl;
-
-    return { success: true, replyUrl };
+    return { success: true, replyUrl: replyUrl || postUrl };
   } catch (err) {
     return { success: false, error: `Failed to post Reddit comment: ${err instanceof Error ? err.message : String(err)}` };
   } finally {

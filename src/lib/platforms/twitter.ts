@@ -69,7 +69,10 @@ export async function verifyTwitterCookies(opts: VerifyOptions): Promise<Verific
     } catch {}
 
     const accountId = `tw_${username || 'unknown'}`;
-    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, displayName, cookieMap, verifiedAt: new Date().toISOString() }));
+    const storedCookieList = cookieList.map((c) => ({
+      name: c.name, value: c.value, domain: c.domain, path: c.path || '/',
+    }));
+    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, displayName, cookieMap, cookieList: storedCookieList, verifiedAt: new Date().toISOString() }));
 
     return { success: true, username, displayName, accountId, profileDir };
   } catch (err) {

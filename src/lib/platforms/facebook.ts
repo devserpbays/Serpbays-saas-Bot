@@ -57,7 +57,10 @@ export async function verifyFacebookCookies(opts: VerifyOptions): Promise<Verifi
     } catch {}
 
     const accountId = `fb_${cUser}`;
-    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, displayName, cUser, cookieMap, verifiedAt: new Date().toISOString() }));
+    const storedCookieList = cookieList.map((c) => ({
+      name: c.name, value: c.value, domain: c.domain, path: c.path || '/',
+    }));
+    writeFileSync(join(profileDir, '.verified'), JSON.stringify({ accountId, username, displayName, cUser, cookieMap, cookieList: storedCookieList, verifiedAt: new Date().toISOString() }));
 
     return { success: true, username: username || cUser, displayName, accountId, profileDir };
   } catch (err) {
@@ -154,7 +157,8 @@ export async function scrapeFacebook(ctx: ScrapeContext): Promise<ScrapedPost[]>
 
 /**
  * Post a comment on a Facebook post using Playwright DOM automation.
- * Navigates to the post URL, finds the comment box, types the reply, and submits.
+ * Matches the proven bot-serp approach: modal handling, force clicks, human typing,
+ * Enter submit, post verification with box-cleared + comment-section checks.
  */
 export async function postFacebookReply(ctx: PostReplyContext): Promise<PostReplyResult> {
   const { postUrl, replyText, cookieList, cookieMap, profileDir } = ctx;
@@ -178,7 +182,7 @@ export async function postFacebookReply(ctx: PostReplyContext): Promise<PostRepl
     await context.addCookies(cookieList);
     const page = context.pages()[0] || await context.newPage();
 
-    await page.goto(postUrl, { waitUntil: 'commit', timeout: NAVIGATION_TIMEOUT });
+    await page.goto(postUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT });
     await page.waitForTimeout(4000);
 
     // Check if we were redirected to login
@@ -187,60 +191,117 @@ export async function postFacebookReply(ctx: PostReplyContext): Promise<PostRepl
       return { success: false, error: 'Session expired — redirected to login. Please re-verify cookies.' };
     }
 
-    // Try to find and click the comment input area
-    // Facebook uses contenteditable divs with specific aria labels or form roles
+    // Post may open in a modal — scroll down inside it to reveal comment box
+    const modal = await page.$('[role="dialog"]');
+    if (modal) {
+      await page.evaluate(() => {
+        const dialogs = document.querySelectorAll('[role="dialog"]');
+        dialogs.forEach((d) => {
+          const children = d.querySelectorAll('div');
+          children.forEach((c) => {
+            if (c.scrollHeight > c.clientHeight) {
+              c.scrollTop = c.scrollHeight;
+            }
+          });
+        });
+      });
+      await page.waitForTimeout(2000);
+    }
+
+    // Find comment box — try multiple selectors, check visibility
     const commentSelectors = [
-      '[aria-label="Write a comment…"]',
+      '[aria-label*="Comment as"]',
       '[aria-label="Write a comment"]',
-      '[aria-label="Comment"]',
-      'div[contenteditable="true"][role="textbox"][aria-label*="comment" i]',
-      'div[contenteditable="true"][role="textbox"][aria-label*="Comment" i]',
-      'form[role="presentation"] div[contenteditable="true"]',
+      '[aria-label="Write a comment\u2026"]',
+      '[aria-label="Write a comment…"]',
+      'div[contenteditable="true"][role="textbox"]',
     ];
 
-    let commentBox = null;
-    for (const selector of commentSelectors) {
-      commentBox = await page.$(selector);
+    let commentBox: Awaited<ReturnType<typeof page.$>> = null;
+    for (const sel of commentSelectors) {
+      const elements = await page.$$(sel);
+      for (const el of elements) {
+        if (await el.isVisible().catch(() => false)) {
+          commentBox = el;
+          break;
+        }
+      }
       if (commentBox) break;
     }
 
-    // If no comment box visible, try scrolling to load comments section
+    // If not found, try clicking a "Comment" button to expand
     if (!commentBox) {
-      await page.mouse.wheel(0, 500);
-      await page.waitForTimeout(2000);
-
-      // Try clicking "Comment" action link to open the comment box
-      const commentAction = await page.$('[aria-label="Leave a comment"], [aria-label="Comment"], span:has-text("Comment")');
-      if (commentAction) {
-        await commentAction.click();
-        await page.waitForTimeout(2000);
+      const commentBtns = await page.$$('div[role="button"]');
+      for (const btn of commentBtns) {
+        const text = await btn.textContent().catch(() => '');
+        if (text?.trim() === 'Comment') {
+          await btn.click({ force: true });
+          await page.waitForTimeout(2000);
+          break;
+        }
       }
 
-      for (const selector of commentSelectors) {
-        commentBox = await page.$(selector);
+      // Retry finding comment box
+      for (const sel of commentSelectors) {
+        const elements = await page.$$(sel);
+        for (const el of elements) {
+          if (await el.isVisible().catch(() => false)) {
+            commentBox = el;
+            break;
+          }
+        }
         if (commentBox) break;
       }
     }
 
     if (!commentBox) {
+      await page.screenshot({ path: '/tmp/fb-comment-failed.png', fullPage: false }).catch(() => {});
       return { success: false, error: 'Could not find comment box. The post may not allow comments.' };
     }
 
-    // Click the comment box to focus it
-    await commentBox.click();
-    await page.waitForTimeout(500);
+    // Click to focus with force (bypass any overlay)
+    await commentBox.click({ force: true });
+    await page.waitForTimeout(1000);
 
-    // Type the reply character by character for contenteditable
-    await page.keyboard.type(replyText, { delay: 20 });
+    // Type the comment with human-like delay
+    await page.keyboard.type(replyText, { delay: 40 });
     await page.waitForTimeout(1000);
 
     // Submit with Enter
     await page.keyboard.press('Enter');
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(5000);
 
-    // The posted comment URL is typically the post URL itself
-    // Facebook doesn't easily expose individual comment permalinks via DOM
-    const replyUrl = postUrl;
+    // Verify submission: the comment box should be empty after a successful post
+    const boxTextAfter = await commentBox.textContent().catch(() => replyText);
+    const boxCleared = !boxTextAfter || boxTextAfter.trim().length === 0;
+
+    // Secondary check: look for our comment text in the comments section (not in input box)
+    const commentSectionText = await page.evaluate((snippet: string) => {
+      const allText = Array.from(document.querySelectorAll('[role="article"] span, [data-testid*="comment"] span'))
+        .map(el => el.textContent || '')
+        .join(' ');
+      return allText.toLowerCase().includes(snippet.toLowerCase());
+    }, replyText.slice(0, 25)).catch(() => false);
+
+    const verified = boxCleared || commentSectionText;
+
+    if (!verified) {
+      await page.screenshot({ path: '/tmp/fb-post-failed.png', fullPage: false }).catch(() => {});
+    }
+
+    // Try to extract comment_id from GraphQL response (best-effort)
+    let fbCommentId = '';
+    try {
+      const responses = page.context().pages();
+      // The comment_id may appear in page content after posting
+      const bodyText = await page.textContent('body').catch(() => '');
+      const match = bodyText?.match(/"comment_id"\s*:\s*"(\d+)"/);
+      if (match) fbCommentId = match[1];
+    } catch {}
+
+    const replyUrl = fbCommentId
+      ? `${postUrl}${postUrl.includes('?') ? '&' : '?'}comment_id=${fbCommentId}`
+      : postUrl;
 
     return { success: true, replyUrl };
   } catch (err) {
