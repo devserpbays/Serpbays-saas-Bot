@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Serpbays SaaS",
-  description: "Social engagement bot platform",
+  title: "GetMention",
+  description: "AI-powered social media engagement platform",
 };
 
 export default function RootLayout({

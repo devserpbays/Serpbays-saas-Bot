@@ -432,22 +432,42 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
                       <PlatformIcon platform={platform.id} />
                       <span className="text-sm font-medium text-foreground">{platform.label}</span>
                     </label>
-                    {accounts.length > 0 && (
+                    {accounts.length > 0 ? (
                       <div className="flex items-center gap-1 flex-wrap">
                         {accounts.map((acc) => <AccountChip key={acc.id} account={acc} onRemove={handleAccountRemoved} />)}
+                        {canEdit && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 rounded-full"
+                            onClick={() => setOpenForms((prev) => ({ ...prev, [platform.id]: !prev[platform.id] }))}
+                          >
+                            {formOpen ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                          </Button>
+                        )}
                       </div>
-                    )}
-                    {canEdit && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 rounded-full"
-                        onClick={() => setOpenForms((prev) => ({ ...prev, [platform.id]: !prev[platform.id] }))}
-                      >
-                        {formOpen ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                      </Button>
+                    ) : (
+                      canEdit && (
+                        <Button
+                          variant={enabled ? 'outline' : 'ghost'}
+                          size="sm"
+                          className={`text-xs gap-1.5 ${enabled ? 'border-dashed' : ''}`}
+                          onClick={() => setOpenForms((prev) => ({ ...prev, [platform.id]: !prev[platform.id] }))}
+                        >
+                          {formOpen ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                          {formOpen ? 'Cancel' : 'Connect Account'}
+                        </Button>
+                      )
                     )}
                   </div>
+                  {/* No account warning for enabled platforms */}
+                  {enabled && accounts.length === 0 && !formOpen && (
+                    <p className="text-xs text-amber-400 mt-2 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                      No account connected — cookies required to scrape and post.
+                    </p>
+                  )}
+
                   {formOpen && canEdit && (
                     <AddAccountForm platform={platform} nextIndex={nextIndexForPlatform(platform.id)}
                       onSuccess={handleAccountAdded} onCancel={() => setOpenForms((prev) => ({ ...prev, [platform.id]: false }))} />

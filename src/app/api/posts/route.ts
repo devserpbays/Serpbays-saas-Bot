@@ -20,7 +20,12 @@ export async function GET(req: NextRequest) {
   const limit = parseInt(searchParams.get('limit') || '20');
 
   const filter: Record<string, unknown> = { workspaceId: ctx.workspaceId };
-  if (status) filter.status = status;
+  if (status) {
+    filter.status = status;
+  } else {
+    // Default view: exclude auto-rejected posts (below threshold)
+    filter.status = { $ne: 'rejected' };
+  }
   if (platform) filter.platform = platform;
   if (minScore) filter.aiRelevanceScore = { $gte: parseInt(minScore) };
   if (competitor) filter.competitorMentioned = competitor;

@@ -9,12 +9,19 @@ export default {
     signIn: '/sign-in',
   },
   callbacks: {
+    redirect({ url, baseUrl }) {
+      // Allow relative URLs
+      if (url.startsWith('/')) return `${baseUrl}${url}`;
+      // Allow same-origin URLs
+      if (url.startsWith(baseUrl)) return url;
+      return baseUrl;
+    },
     authorized({ auth, request }) {
       const isLoggedIn = !!auth?.user;
       const { pathname } = request.nextUrl;
 
-      // Public pages: sign-in, sign-up
-      const isPublicPage = pathname.startsWith('/sign-in') || pathname.startsWith('/sign-up');
+      // Public pages: home, sign-in, sign-up
+      const isPublicPage = pathname === '/' || pathname.startsWith('/sign-in') || pathname.startsWith('/sign-up');
 
       // API auth routes must always be accessible
       const isAuthRoute = pathname.startsWith('/api/auth');
@@ -32,9 +39,10 @@ export default {
         return true;
       }
 
-      // Public pages: allow access, redirect to dashboard if already logged in
+      // Public pages: allow access
       if (isPublicPage) {
-        if (isLoggedIn) {
+        // Redirect logged-in users from auth pages to dashboard (not from landing page)
+        if (isLoggedIn && pathname !== '/') {
           return Response.redirect(new URL('/dashboard', request.nextUrl));
         }
         return true;

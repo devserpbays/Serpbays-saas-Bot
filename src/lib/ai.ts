@@ -17,6 +17,19 @@ const execAsync = promisify(exec);
 const OPENCLAW_HOST = process.env.OPENCLAW_HOST || '127.0.0.1';
 const OPENCLAW_PORT = process.env.OPENCLAW_PORT || '18789';
 
+const EVAL_BATCH_SIZE = 20;
+const DELAY_BETWEEN_EVALS_MS = 3000; // 3s between each evaluation call
+const MAX_RETRIES = 3;
+const INITIAL_BACKOFF_MS = 10000; // 10s initial backoff on rate limit
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(msg: string): boolean {
+  return /rate.?limit|cooldown|too many requests|429|all models failed/i.test(msg);
+}
+
 // --- Build the evaluation prompt ---
 function buildPrompt(
   postContent: string,
@@ -47,7 +60,7 @@ function buildPrompt(
   if (tones && tones.length > 1) {
     const toneHintSection = toneHints ? `\n\nHistorical tone performance data:\n${toneHints}\nUse this data to craft better variations for the higher-performing tones.` : '';
 
-    return `You are a social media engagement analyst. Analyze the following social media post and determine if it describes a problem or need that "${companyName}" can help solve.
+    return `You are a social media engagement analyst. Analyze the following social media post and determine if it is DIRECTLY related to what "${companyName}" does.
 
 Company: ${companyName}
 Company Description: ${companyDescription}
@@ -59,23 +72,38 @@ ${postContent.slice(0, 1000)}
 """
 ${toneHintSection}
 
+IMPORTANT RULES:
+- Set "relevant" to true ONLY if the post is directly about the product/service domain that ${companyName} operates in.
+- If the post is about unrelated topics (legal, medical, news, politics, personal stories, etc.), set "relevant": false, "score": 0, and set all variation texts to empty strings.
+- Only generate reply variations if "relevant" is true.
+
+CRITICAL REPLY GUIDELINES (to avoid spam filters):
+- Do NOT mention "${companyName}" by name in any reply. Never include the brand/company name.
+- Do NOT include any calls-to-action like "check us out", "visit our site", "try our tool", etc.
+- Do NOT include any URLs or links.
+- Do NOT use marketing buzzwords like "scale", "streamline", "revolutionize", "game-changer", etc.
+- Write as a genuine, knowledgeable person sharing helpful advice or insight from experience.
+- Keep replies conversational and natural — as if a real human expert is commenting.
+- Add genuine value: share a specific tip, personal experience, or useful perspective.
+- It's OK to hint at a solution approach without naming the product (e.g., "I've found that using a managed outreach service saves a ton of time" instead of "SerpBays can help").
+
 Generate ${tones.length} reply variations, one for each tone: ${tones.join(', ')}.
 
 Respond ONLY with valid JSON (no markdown, no code blocks, no extra text):
 {
   "relevant": true or false,
   "score": 0 to 100,
-  "suggestedReply": "Copy of the first variation text for backward compatibility",
+  "suggestedReply": "Copy of the first variation text (empty string if not relevant)",
   "tone": "${tones[0]}",
   "reasoning": "Brief explanation of why this is or isn't relevant",${competitorFields}
   "variations": [
-${tones.map(t => `    { "text": "A helpful, non-salesy reply in a ${t} tone that naturally mentions how ${companyName} could help.", "tone": "${t}" }`).join(',\n')}
+${tones.map(t => `    { "text": "A genuinely helpful reply in ${t} tone. Share real insight or advice without naming any brand. Empty string if not relevant.", "tone": "${t}" }`).join(',\n')}
   ]
 }`;
   }
 
   // Single reply mode
-  return `You are a social media engagement analyst. Analyze the following social media post and determine if it describes a problem or need that "${companyName}" can help solve.
+  return `You are a social media engagement analyst. Analyze the following social media post and determine if it is DIRECTLY related to what "${companyName}" does.
 
 Company: ${companyName}
 Company Description: ${companyDescription}
@@ -86,11 +114,26 @@ Social Media Post:
 ${postContent.slice(0, 1000)}
 """
 
+IMPORTANT RULES:
+- Set "relevant" to true ONLY if the post is directly about the product/service domain that ${companyName} operates in.
+- If the post is about unrelated topics (legal, medical, news, politics, personal stories, etc.), set "relevant": false and "score": 0.
+- Only generate a "suggestedReply" if "relevant" is true. If not relevant, set "suggestedReply" to an empty string "".
+
+CRITICAL REPLY GUIDELINES (to avoid spam filters):
+- Do NOT mention "${companyName}" by name. Never include the brand/company name.
+- Do NOT include calls-to-action like "check us out", "visit our site", "try our tool", etc.
+- Do NOT include any URLs or links.
+- Do NOT use marketing buzzwords like "scale", "streamline", "revolutionize", "game-changer", etc.
+- Write as a genuine, knowledgeable person sharing helpful advice from experience.
+- Keep it conversational and natural — like a real expert commenting.
+- Add genuine value: share a specific tip, personal experience, or useful perspective.
+- It's OK to hint at a solution approach without naming the product (e.g., "I've had great results using a managed outreach platform for this" instead of naming the brand).
+
 Respond ONLY with valid JSON (no markdown, no code blocks, no extra text):
 {
   "relevant": true or false,
   "score": 0 to 100,
-  "suggestedReply": "A helpful, non-salesy reply that naturally mentions how ${companyName} could help. Keep it conversational and genuine.",
+  "suggestedReply": "A genuinely helpful reply that shares real insight or advice without naming any brand. Write as a knowledgeable person, not a marketer. Empty string if not relevant.",
   "tone": "helpful or empathetic or informative or casual",
   "reasoning": "Brief explanation of why this is or isn't relevant"${competitorFields}
 }`;
@@ -98,12 +141,18 @@ Respond ONLY with valid JSON (no markdown, no code blocks, no extra text):
 
 // --- Parse AI evaluation from raw text ---
 function parseEvaluation(text: string): AIEvaluation | null {
+  // Strip markdown code fences if present: ```json ... ``` or ```...```
+  let cleaned = text.trim();
+  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    cleaned = fenceMatch[1].trim();
+  }
+
   // Try direct JSON parse
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(cleaned);
     if ('relevant' in parsed && 'score' in parsed) {
       const result = parsed as AIEvaluation;
-      // Back-fill suggestedReply/tone from variations[0] if present
       if (result.variations && result.variations.length > 0 && !result.suggestedReply) {
         result.suggestedReply = result.variations[0].text;
         result.tone = result.variations[0].tone;
@@ -114,18 +163,31 @@ function parseEvaluation(text: string): AIEvaluation | null {
     // not direct JSON
   }
 
-  // Extract JSON from markdown code blocks or mixed text
-  const jsonMatch = text.match(/\{[\s\S]*?"relevant"[\s\S]*?"reasoning"[\s\S]*?\}/);
-  if (jsonMatch) {
-    try {
-      const result = JSON.parse(jsonMatch[0]) as AIEvaluation;
-      if (result.variations && result.variations.length > 0 && !result.suggestedReply) {
-        result.suggestedReply = result.variations[0].text;
-        result.tone = result.variations[0].tone;
+  // Extract JSON object by finding balanced braces
+  const startIdx = cleaned.indexOf('{');
+  if (startIdx !== -1) {
+    let depth = 0;
+    let endIdx = -1;
+    for (let i = startIdx; i < cleaned.length; i++) {
+      if (cleaned[i] === '{') depth++;
+      else if (cleaned[i] === '}') {
+        depth--;
+        if (depth === 0) { endIdx = i; break; }
       }
-      return result;
-    } catch {
-      // malformed JSON
+    }
+    if (endIdx !== -1) {
+      try {
+        const result = JSON.parse(cleaned.slice(startIdx, endIdx + 1)) as AIEvaluation;
+        if ('relevant' in result && 'score' in result) {
+          if (result.variations && result.variations.length > 0 && !result.suggestedReply) {
+            result.suggestedReply = result.variations[0].text;
+            result.tone = result.variations[0].tone;
+          }
+          return result;
+        }
+      } catch {
+        // malformed JSON
+      }
     }
   }
 
@@ -203,7 +265,17 @@ async function evaluateViaCLI(prompt: string): Promise<string> {
   }
 }
 
-// --- Main evaluation function ---
+// --- Call OpenClaw with HTTP→CLI fallback ---
+async function callOpenClaw(prompt: string): Promise<string> {
+  try {
+    return await evaluateViaHTTP(prompt);
+  } catch (httpErr) {
+    console.warn('OpenClaw HTTP failed, trying CLI:', (httpErr as Error).message);
+    return await evaluateViaCLI(prompt);
+  }
+}
+
+// --- Main evaluation function (with retry + backoff) ---
 export async function evaluatePost(
   postContent: string,
   companyName: string,
@@ -215,38 +287,44 @@ export async function evaluatePost(
 ): Promise<AIEvaluation> {
   const prompt = buildPrompt(postContent, companyName, companyDescription, promptTemplate, competitors, tones, toneHints);
 
-  let rawResponse: string;
+  let lastError = '';
 
-  // Try HTTP API first, fall back to CLI
-  try {
-    rawResponse = await evaluateViaHTTP(prompt);
-  } catch (httpErr) {
-    console.warn('OpenClaw HTTP API failed, falling back to CLI:', (httpErr as Error).message);
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      rawResponse = await evaluateViaCLI(prompt);
-    } catch (cliErr) {
-      console.error('OpenClaw CLI also failed:', (cliErr as Error).message);
+      const rawResponse = await callOpenClaw(prompt);
+
+      const evaluation = parseEvaluation(rawResponse);
+      if (evaluation) return evaluation;
+
       return {
         relevant: false,
         score: 0,
         suggestedReply: '',
         tone: 'helpful',
-        reasoning: `OpenClaw evaluation failed: ${(cliErr as Error).message}`,
+        reasoning: `Could not parse AI response: ${rawResponse.slice(0, 200)}`,
       };
+    } catch (err) {
+      lastError = (err as Error).message;
+
+      if (isRateLimitError(lastError) && attempt < MAX_RETRIES - 1) {
+        const backoff = INITIAL_BACKOFF_MS * Math.pow(2, attempt); // 10s, 20s, 40s
+        console.warn(`Rate limit hit (attempt ${attempt + 1}/${MAX_RETRIES}), waiting ${backoff / 1000}s...`);
+        await sleep(backoff);
+        continue;
+      }
+
+      // Non-rate-limit error or final attempt — stop retrying
+      break;
     }
   }
 
-  const evaluation = parseEvaluation(rawResponse);
-  if (evaluation) {
-    return evaluation;
-  }
-
+  console.error('OpenClaw evaluation failed after retries:', lastError);
   return {
     relevant: false,
     score: 0,
     suggestedReply: '',
     tone: 'helpful',
-    reasoning: `Could not parse AI response: ${rawResponse.slice(0, 200)}`,
+    reasoning: `OpenClaw evaluation failed: ${lastError}`,
   };
 }
 
@@ -458,7 +536,7 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
   // Find posts with status 'new', limit batch size
   const posts = await Post.find({ workspaceId, status: 'new' })
     .sort({ scrapedAt: -1 })
-    .limit(50)
+    .limit(EVAL_BATCH_SIZE)
     .lean();
 
   if (!posts.length) return { evaluated: 0, total: 0, autoApproved: 0 };
@@ -490,7 +568,11 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
   let autoApproved = 0;
   const evaluatedPostsForMetrics: Array<{ keywordsMatched: string[]; aiRelevanceScore: number; platform: string }> = [];
 
-  for (const post of posts) {
+  for (let i = 0; i < posts.length; i++) {
+    // Delay between calls to avoid rate limits (skip before first)
+    if (i > 0) await sleep(DELAY_BETWEEN_EVALS_MS);
+
+    const post = posts[i];
     try {
       const content = post.content as string;
       const result = await evaluatePost(
@@ -509,9 +591,20 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
       const platform = post.platform as string;
       const threshold = autoPostThresholds[platform] ?? 70;
       const shouldAutoApprove = result.relevant && result.score >= threshold;
+      const belowThreshold = !result.relevant || result.score < threshold;
+
+      // Determine status: approve if above threshold, reject if below
+      let postStatus: string;
+      if (shouldAutoApprove) {
+        postStatus = 'approved';
+      } else if (belowThreshold) {
+        postStatus = 'rejected';
+      } else {
+        postStatus = 'evaluated';
+      }
 
       const updateData: Record<string, unknown> = {
-        status: shouldAutoApprove ? 'approved' : 'evaluated',
+        status: postStatus,
         aiRelevanceScore: result.score,
         aiReply: result.suggestedReply,
         aiTone: result.tone,
@@ -524,6 +617,11 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
         updateData.approvedAt = new Date();
         updateData.autoApproved = true;
         autoApproved++;
+      }
+
+      if (belowThreshold && !shouldAutoApprove) {
+        updateData.autoRejected = true;
+        updateData.rejectedAt = new Date();
       }
 
       // Competitor fields

@@ -5,6 +5,7 @@ import Post from '@/models/Post';
 import Settings from '@/models/Settings';
 import ActivityLog from '@/models/ActivityLog';
 import { getProfileDir } from '@/lib/profilePath';
+import { buildCookieList } from '@/lib/cookies';
 import type { ApiContext } from '@/lib/types';
 import type { Cookie } from 'playwright';
 import type { PostReplyResult } from '@/lib/platforms/types';
@@ -78,6 +79,7 @@ export async function resolvePostForReply(
 
   // Load cookies from .verified file
   let cookieMap: Record<string, string> = {};
+  let storedCookieList: Array<{ name: string; value: string; domain: string; path?: string }> | undefined;
   let accountId = account.id || '';
 
   const verifiedPath = join(profileDir, '.verified');
@@ -85,6 +87,7 @@ export async function resolvePostForReply(
     try {
       const data = JSON.parse(readFileSync(verifiedPath, 'utf-8'));
       if (data.cookieMap) cookieMap = data.cookieMap;
+      if (data.cookieList) storedCookieList = data.cookieList;
       if (data.accountId) accountId = data.accountId;
     } catch {}
   }
@@ -97,6 +100,7 @@ export async function resolvePostForReply(
       try {
         const data = JSON.parse(readFileSync(legacyPath, 'utf-8'));
         if (data.cookieMap) cookieMap = data.cookieMap;
+        if (data.cookieList) storedCookieList = data.cookieList;
         if (data.accountId) accountId = data.accountId;
       } catch {}
     }
@@ -106,28 +110,8 @@ export async function resolvePostForReply(
     return `No verified cookies found for ${platformName}. Please re-verify your account.`;
   }
 
-  // Build cookieList from cookieMap for Playwright-based platforms
-  const domainMap: Record<string, string> = {
-    twitter: '.x.com',
-    reddit: '.reddit.com',
-    facebook: '.facebook.com',
-    quora: '.quora.com',
-    youtube: '.youtube.com',
-    pinterest: '.pinterest.com',
-  };
-  const domain = domainMap[platformName] || `.${platformName}.com`;
-  const ninetyDays = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60;
-
-  const cookieList: Cookie[] = Object.entries(cookieMap).map(([name, value]) => ({
-    name,
-    value,
-    domain,
-    path: '/',
-    expires: ninetyDays,
-    httpOnly: false,
-    secure: true,
-    sameSite: 'Lax' as const,
-  }));
+  // Build cookieList (uses stored list with domains when available, falls back to cookieMap)
+  const cookieList = buildCookieList(cookieMap, platformName, storedCookieList);
 
   return {
     postId,

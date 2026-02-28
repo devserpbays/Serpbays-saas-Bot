@@ -5,13 +5,13 @@ import Post from '@/models/Post';
 import Settings from '@/models/Settings';
 import ActivityLog from '@/models/ActivityLog';
 import { getProfileDir } from '@/lib/profilePath';
+import { buildCookieList } from '@/lib/cookies';
 import { postTwitterReply } from '@/lib/platforms/twitter';
 import { postRedditReply } from '@/lib/platforms/reddit';
 import { postFacebookReply } from '@/lib/platforms/facebook';
 import { postQuoraReply } from '@/lib/platforms/quora';
 import { postYoutubeReply } from '@/lib/platforms/youtube';
 import { postPinterestReply } from '@/lib/platforms/pinterest';
-import type { Cookie } from 'playwright';
 import type { PostReplyContext, PostReplyResult } from '@/lib/platforms/types';
 import type { AutoPostResult } from '@/lib/types';
 
@@ -26,14 +26,6 @@ const POSTER_MAP: Record<string, (ctx: PostReplyContext) => Promise<PostReplyRes
   pinterest: postPinterestReply,
 };
 
-const DOMAIN_MAP: Record<string, string> = {
-  twitter: '.x.com',
-  reddit: '.reddit.com',
-  facebook: '.facebook.com',
-  quora: '.quora.com',
-  youtube: '.youtube.com',
-  pinterest: '.pinterest.com',
-};
 
 const DELAY_BETWEEN_POSTS_MS = 30_000; // 30 seconds between posts
 
@@ -147,6 +139,7 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
     // Load cookies for this platform
     const profileDir = getProfileDir(workspaceId, platform, config.accountIndex);
     let cookieMap: Record<string, string> = {};
+    let storedCookieList: Array<{ name: string; value: string; domain: string; path?: string }> | undefined;
     let accountId = config.accountId;
 
     const verifiedPath = join(profileDir, '.verified');
@@ -154,6 +147,7 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
       try {
         const data = JSON.parse(readFileSync(verifiedPath, 'utf-8'));
         if (data.cookieMap) cookieMap = data.cookieMap;
+        if (data.cookieList) storedCookieList = data.cookieList;
         if (data.accountId) accountId = data.accountId;
       } catch { /* skip */ }
     }
@@ -166,6 +160,7 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
         try {
           const data = JSON.parse(readFileSync(legacyPath, 'utf-8'));
           if (data.cookieMap) cookieMap = data.cookieMap;
+          if (data.cookieList) storedCookieList = data.cookieList;
           if (data.accountId) accountId = data.accountId;
         } catch { /* skip */ }
       }
@@ -177,19 +172,8 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
       continue;
     }
 
-    // Build cookie list for Playwright
-    const domain = DOMAIN_MAP[platform] || `.${platform}.com`;
-    const ninetyDays = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60;
-    const cookieList: Cookie[] = Object.entries(cookieMap).map(([name, value]) => ({
-      name,
-      value,
-      domain,
-      path: '/',
-      expires: ninetyDays,
-      httpOnly: false,
-      secure: true,
-      sameSite: 'Lax' as const,
-    }));
+    // Build cookie list (uses stored list with domains when available)
+    const cookieList = buildCookieList(cookieMap, platform, storedCookieList);
 
     const poster = POSTER_MAP[platform];
     if (!poster) {
