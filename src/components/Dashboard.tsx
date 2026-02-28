@@ -2,11 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { signOut, useSession } from 'next-auth/react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import type { IPost, SocialAccount, WorkspaceRole, SchedulerStatus, AccountHealth, CookieHealthStatus } from '@/lib/types';
 import PostCard from './PostCard';
 import SettingsPanel from './SettingsPanel';
 import ActivityFeed from './ActivityFeed';
 import OnboardingChecklist from './OnboardingChecklist';
+import ProfilePanel from './ProfilePanel';
 import { PLATFORMS, PLATFORM_MAP, PlatformIcon } from '@/lib/platforms/config';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -20,7 +22,7 @@ import {
   Settings, LogOut, Clock, Play, Loader2, ChevronDown, ChevronLeft,
   ChevronRight, Plus, AlertTriangle, TrendingUp, TrendingDown, Minus,
   FlaskConical, BarChart3, FileText, Timer, Square, Zap,
-  ShieldCheck, ShieldAlert, ShieldX, ShieldOff, RefreshCw,
+  ShieldCheck, ShieldAlert, ShieldX, ShieldOff, RefreshCw, UserCircle,
 } from 'lucide-react';
 
 interface PostsResponse {
@@ -86,12 +88,15 @@ const POLL_INTERVAL_MS = 10_000;
 
 export default function Dashboard() {
   const { data: session, update: updateSession } = useSession();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [posts, setPosts] = useState<IPost[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [platformFilter, setPlatformFilter] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
 
   const [scraping, setScraping] = useState(false);
@@ -275,6 +280,17 @@ export default function Dashboard() {
     }, POLL_INTERVAL_MS);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [activeWorkspace, fetchStats, fetchPosts, fetchSchedulerStatus]);
+
+  // Handle deep-link from profile page: ?openSettings=platforms
+  useEffect(() => {
+    const openTab = searchParams.get('openSettings');
+    if (openTab && activeWorkspace) {
+      setSettingsDefaultTab(openTab);
+      setSettingsOpen(true);
+      // Clean up URL
+      router.replace('/dashboard', { scroll: false });
+    }
+  }, [searchParams, activeWorkspace, router]);
 
   const handleWorkspaceSwitch = async (workspaceId: string) => {
     try {
@@ -482,9 +498,14 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-2">
-            {session?.user && (
-              <span className="text-sm text-muted-foreground mr-1 hidden sm:inline">{session.user.name}</span>
-            )}
+            <Button
+              variant={profileOpen ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setProfileOpen(true)}
+            >
+              <UserCircle className="w-4 h-4" />
+              Profile
+            </Button>
             <Button
               variant={showActivity ? 'default' : 'outline'}
               size="sm"
@@ -985,6 +1006,7 @@ export default function Dashboard() {
       </div>
 
       <SettingsPanel open={settingsOpen} onClose={handleSettingsClose} workspaceId={activeWorkspace?._id} role={userRole} defaultTab={settingsDefaultTab} />
+      <ProfilePanel open={profileOpen} onClose={() => setProfileOpen(false)} onOpenSettings={handleOpenSettingsToTab} />
     </div>
   );
 }
