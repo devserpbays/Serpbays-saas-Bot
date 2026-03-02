@@ -12,9 +12,9 @@ module.exports = {
         PORT: '3006',
         DATABASE_URL: 'postgresql://postgres:serpbays_pass@127.0.0.1:5432/serpbays_saas',
         OPENCLAW_HOST: '127.0.0.1',
-        OPENCLAW_PORT: '18789',
-        OPENCLAW_TOKEN: '05efa16f424c984deadab663acb32433cf8dc3335a68b2ef',
-        OPENCLAW_MODEL: 'google-antigravity/gemini-3-flash',
+        OPENCLAW_PORT: '',
+        OPENCLAW_TOKEN: '',
+        OPENCLAW_MODEL: '',
       },
       // Auto-restart on crash
       autorestart: true,
