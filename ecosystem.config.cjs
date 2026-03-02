@@ -10,6 +10,10 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '3006',
+        OPENCLAW_HOST: '127.0.0.1',
+        OPENCLAW_PORT: '18789',
+        OPENCLAW_TOKEN: '05efa16f424c984deadab663acb32433cf8dc3335a68b2ef',
+        OPENCLAW_MODEL: 'google-antigravity/gemini-3-flash',
       },
       // Auto-restart on crash
       autorestart: true,
