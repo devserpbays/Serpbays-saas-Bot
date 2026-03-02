@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { connectDB } from '@/lib/mongodb';
-import Settings from '@/models/Settings';
+import { db } from '@/lib/db';
 import { getProfileDir } from '@/lib/profilePath';
 import type { SocialAccount, AccountHealth, CookieHealthResult, CookieHealthStatus } from '@/lib/types';
 
@@ -25,17 +24,14 @@ const STALE_THRESHOLD_HOURS = 72; // 3 days = stale warning
  * Check the health of all social account cookies for a workspace.
  */
 export async function checkCookieHealth(workspaceId: string): Promise<CookieHealthResult> {
-  await connectDB();
-
-  const settings = await Settings.findOne({ workspaceId }).lean();
+  const settings = await db.settings.findUnique({ where: { workspaceId } });
   if (!settings) {
     return { accounts: [], summary: { healthy: 0, stale: 0, missing: 0, invalid: 0 } };
   }
 
-  const settingsObj = settings as Record<string, unknown>;
-  const userId = (settingsObj.userId as { toString(): string }).toString();
-  const accounts = (settingsObj.socialAccounts as SocialAccount[]) || [];
-  const enabledPlatforms = (settingsObj.platforms as string[]) || [];
+  const userId = settings.userId;
+  const accounts = (settings.socialAccounts as unknown as SocialAccount[]) || [];
+  const enabledPlatforms = (settings.platforms as unknown as string[]) || [];
 
   const results: AccountHealth[] = [];
 

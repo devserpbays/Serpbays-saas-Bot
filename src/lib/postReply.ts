@@ -1,9 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { connectDB } from '@/lib/mongodb';
-import Post from '@/models/Post';
-import Settings from '@/models/Settings';
-import ActivityLog from '@/models/ActivityLog';
+import { db } from '@/lib/db';
 import { getProfileDir } from '@/lib/profilePath';
 import { buildCookieList } from '@/lib/cookies';
 import type { ApiContext } from '@/lib/types';
@@ -31,9 +28,7 @@ export async function resolvePostForReply(
   postId: string,
   platformName: string
 ): Promise<ResolvedPost | string> {
-  await connectDB();
-
-  const post = await Post.findOne({ _id: postId, workspaceId: ctx.workspaceId });
+  const post = await db.post.findFirst({ where: { id: postId, workspaceId: ctx.workspaceId } });
   if (!post) return 'Post not found';
 
   if (post.status === 'posted') return 'Already posted';
@@ -47,11 +42,12 @@ export async function resolvePostForReply(
   if (post.editedReply) {
     replyText = post.editedReply;
   } else if (
-    post.aiReplies?.length > 0 &&
+    (post.aiReplies as Array<{ text: string; tone: string }> | undefined)?.length &&
     post.selectedVariationIndex >= 0 &&
-    post.selectedVariationIndex < post.aiReplies.length
+    post.selectedVariationIndex < (post.aiReplies as Array<{ text: string; tone: string }>).length
   ) {
-    const variation = post.aiReplies[post.selectedVariationIndex];
+    const variations = post.aiReplies as Array<{ text: string; tone: string }>;
+    const variation = variations[post.selectedVariationIndex];
     replyText = variation.text;
     postedTone = variation.tone || '';
   } else if (post.aiReply) {
@@ -62,7 +58,7 @@ export async function resolvePostForReply(
   if (!replyText) return 'No reply text available';
 
   // Load settings to find the active social account
-  const settings = await Settings.findOne({ workspaceId: ctx.workspaceId }).lean();
+  const settings = await db.settings.findUnique({ where: { workspaceId: ctx.workspaceId } });
   if (!settings) return 'No settings found for workspace';
 
   const accounts = (settings.socialAccounts as Array<{
@@ -136,25 +132,25 @@ export async function finalizePostedReply(
   accountId: string,
   postedTone: string
 ): Promise<void> {
-  await Post.updateOne(
-    { _id: postId },
-    {
-      $set: {
-        status: 'posted',
-        postedAt: new Date(),
-        postedByAccount: accountId,
-        replyUrl: result.replyUrl || '',
-        postedTone,
-      },
-    }
-  );
+  await db.post.update({
+    where: { id: postId },
+    data: {
+      status: 'posted',
+      postedAt: new Date(),
+      postedByAccount: accountId,
+      replyUrl: result.replyUrl || '',
+      postedTone,
+    },
+  });
 
-  await ActivityLog.create({
-    workspaceId: ctx.workspaceId,
-    userId: ctx.userId,
-    action: 'post.posted',
-    targetType: 'post',
-    targetId: postId,
-    meta: { replyUrl: result.replyUrl || '', accountId },
+  await db.activityLog.create({
+    data: {
+      workspaceId: ctx.workspaceId,
+      userId: ctx.userId,
+      action: 'post.posted',
+      targetType: 'post',
+      targetId: postId,
+      meta: { replyUrl: result.replyUrl || '', accountId },
+    },
   });
 }

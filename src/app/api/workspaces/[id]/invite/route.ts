@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { connectDB } from '@/lib/mongodb';
-import Workspace from '@/models/Workspace';
-import Invitation from '@/models/Invitation';
-import ActivityLog from '@/models/ActivityLog';
+import { db } from '@/lib/db';
 import { getApiUserId } from '@/lib/apiAuth';
 
 export async function POST(
@@ -14,21 +11,16 @@ export async function POST(
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  await connectDB();
 
-  const workspace = await Workspace.findOne({
-    _id: id,
-    'members.userId': userId,
+  const member = await db.workspaceMember.findFirst({
+    where: { workspaceId: id, userId },
   });
 
-  if (!workspace) {
+  if (!member) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  const currentMember = workspace.members.find(
-    (m: { userId: { toString(): string } }) => m.userId.toString() === userId
-  );
-  if (!currentMember || !['owner', 'editor'].includes(currentMember.role)) {
+  if (!['owner', 'editor'].includes(member.role)) {
     return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
   }
 
@@ -41,22 +33,9 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid role. Must be editor or reviewer' }, { status: 400 });
   }
 
-  // Check if already a member
-  const existingMember = workspace.members.find(
-    (m: { userId: { toString(): string } }) => {
-      // We'd need to look up by email, but members are stored by userId
-      return false;
-    }
-  );
-  if (existingMember) {
-    return NextResponse.json({ error: 'User is already a member' }, { status: 409 });
-  }
-
   // Check for existing pending invitation
-  const existingInvite = await Invitation.findOne({
-    workspaceId: id,
-    email: email.toLowerCase(),
-    status: 'pending',
+  const existingInvite = await db.invitation.findFirst({
+    where: { workspaceId: id, email: email.toLowerCase(), status: 'pending' },
   });
   if (existingInvite) {
     return NextResponse.json({ error: 'Invitation already pending for this email' }, { status: 409 });
@@ -65,28 +44,32 @@ export async function POST(
   const token = randomUUID();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-  const invitation = await Invitation.create({
-    workspaceId: id,
-    email: email.toLowerCase(),
-    role,
-    invitedBy: userId,
-    token,
-    status: 'pending',
-    expiresAt,
+  const invitation = await db.invitation.create({
+    data: {
+      workspaceId: id,
+      email: email.toLowerCase(),
+      role,
+      invitedBy: userId,
+      token,
+      status: 'pending',
+      expiresAt,
+    },
   });
 
-  await ActivityLog.create({
-    workspaceId: id,
-    userId,
-    action: 'member.invited',
-    targetType: 'invitation',
-    targetId: invitation._id.toString(),
-    meta: { email, role },
+  await db.activityLog.create({
+    data: {
+      workspaceId: id,
+      userId,
+      action: 'member.invited',
+      targetType: 'invitation',
+      targetId: invitation.id,
+      meta: { email, role },
+    },
   });
 
   return NextResponse.json({
     invitation: {
-      id: invitation._id,
+      id: invitation.id,
       email,
       role,
       token,
@@ -103,21 +86,19 @@ export async function GET(
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  await connectDB();
 
-  const workspace = await Workspace.findOne({
-    _id: id,
-    'members.userId': userId,
-  }).lean();
+  const member = await db.workspaceMember.findFirst({
+    where: { workspaceId: id, userId },
+  });
 
-  if (!workspace) {
+  if (!member) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  const invitations = await Invitation.find({
-    workspaceId: id,
-    status: 'pending',
-  }).sort({ createdAt: -1 }).lean();
+  const invitations = await db.invitation.findMany({
+    where: { workspaceId: id, status: 'pending' },
+    orderBy: { createdAt: 'desc' },
+  });
 
   return NextResponse.json({ invitations });
 }

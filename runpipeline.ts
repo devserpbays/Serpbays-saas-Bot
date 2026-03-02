@@ -1,10 +1,8 @@
-import { connectDB } from './src/lib/mongodb';
 import { runEvaluation } from './src/lib/ai';
 import { runAutoPost } from './src/lib/autoPost';
 
 async function main() {
-  await connectDB();
-  console.log('DB connected. Running evaluation...');
+  console.log('Running evaluation...');
   const evalResult = await runEvaluation('69a18802988740711e11d349');
   console.log('Eval result:', JSON.stringify(evalResult, null, 2));
   console.log('\nRunning autoPost...');

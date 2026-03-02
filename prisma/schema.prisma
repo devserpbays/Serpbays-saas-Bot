@@ -1,0 +1,229 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  password          String
+  name              String
+  activeWorkspaceId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  ownedWorkspaces  Workspace[]       @relation("workspaceOwner")
+  memberships      WorkspaceMember[]
+  invitationsSent  Invitation[]
+  settings         Settings[]
+  posts            Post[]
+  keywordMetrics   KeywordMetric[]
+  tonePerformances TonePerformance[]
+  activityLogs     ActivityLog[]
+}
+
+model Workspace {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  ownerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner        User              @relation("workspaceOwner", fields: [ownerId], references: [id])
+  members      WorkspaceMember[]
+  invitations  Invitation[]
+  settings     Settings?
+  posts        Post[]
+  activityLogs ActivityLog[]
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        String    @default("editor")
+  invitedBy   String?
+  invitedAt   DateTime?
+  joinedAt    DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+}
+
+model Invitation {
+  id          String   @id @default(uuid())
+  workspaceId String
+  email       String
+  role        String   @default("editor")
+  invitedBy   String
+  token       String   @unique
+  status      String   @default("pending")
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inviter   User      @relation(fields: [invitedBy], references: [id])
+}
+
+model Settings {
+  id                         String    @id @default(uuid())
+  userId                     String
+  workspaceId                String    @unique
+  companyName                String
+  companyDescription         String    @default("")
+  keywords                   Json      @default("[]")
+  platforms                  Json      @default("[]")
+  subreddits                 Json      @default("[]")
+  promptTemplate             String    @default("")
+  socialAccounts             Json      @default("[]")
+  facebookGroups             Json      @default("[]")
+  facebookKeywords           Json      @default("[]")
+  facebookDailyLimit         Int       @default(5)
+  facebookAutoPostThreshold  Int       @default(70)
+  twitterKeywords            Json      @default("[]")
+  twitterDailyLimit          Int       @default(10)
+  twitterAutoPostThreshold   Int       @default(70)
+  redditKeywords             Json      @default("[]")
+  redditDailyLimit           Int       @default(5)
+  redditAutoPostThreshold    Int       @default(70)
+  quoraKeywords              Json      @default("[]")
+  quoraDailyLimit            Int       @default(3)
+  quoraAutoPostThreshold     Int       @default(70)
+  youtubeKeywords            Json      @default("[]")
+  youtubeDailyLimit          Int       @default(5)
+  youtubeAutoPostThreshold   Int       @default(70)
+  pinterestKeywords          Json      @default("[]")
+  pinterestDailyLimit        Int       @default(5)
+  pinterestAutoPostThreshold Int       @default(70)
+  platformSchedules          Json      @default("{}")
+  competitors                Json      @default("[]")
+  competitorAlertThreshold   Int       @default(60)
+  suggestedKeywords          Json      @default("[]")
+  keywordSuggestionsLastRun  DateTime?
+  abTestingEnabled           Boolean   @default(true)
+  abVariationCount           Int       @default(3)
+  abTonePresets              Json      @default("[\"helpful\",\"professional\",\"witty\"]")
+  abAutoOptimize             Boolean   @default(false)
+  autoPostingPaused          Boolean   @default(false)
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id])
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Post {
+  id                         String    @id @default(uuid())
+  userId                     String
+  workspaceId                String
+  url                        String
+  platform                   String    @default("facebook")
+  author                     String    @default("Unknown")
+  content                    String
+  scrapedAt                  DateTime  @default(now())
+  status                     String    @default("new")
+  aiReply                    String?
+  aiRelevanceScore           Float?
+  aiTone                     String?
+  aiReasoning                String?
+  keywordsMatched            Json      @default("[]")
+  likeCount                  Int       @default(0)
+  retweetCount               Int       @default(0)
+  replyCount                 Int       @default(0)
+  bookmarkCount              Int       @default(0)
+  viewCount                  Int       @default(0)
+  likedByBot                 Boolean   @default(false)
+  editedReply                String?
+  replyUrl                   String?
+  evaluatedAt                DateTime?
+  approvedAt                 DateTime?
+  autoApproved               Boolean   @default(false)
+  rejectedAt                 DateTime?
+  autoRejected               Boolean   @default(false)
+  postedAt                   DateTime?
+  autoPosted                 Boolean   @default(false)
+  postedByAccount            String    @default("")
+  botReplyEngagement         Json      @default("{\"likes\":0,\"replies\":0,\"lastChecked\":null}")
+  botReplyReplies            Json      @default("[]")
+  followUpStatus             String    @default("none")
+  followUpText               String?
+  followUpPostedAt           DateTime?
+  monitorUntil               DateTime?
+  competitorMentioned        String    @default("")
+  competitorSentiment        String    @default("")
+  competitorOpportunityScore Int       @default(0)
+  isCompetitorOpportunity    Boolean   @default(false)
+  aiReplies                  Json      @default("[]")
+  selectedVariationIndex     Int       @default(-1)
+  postedTone                 String    @default("")
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id])
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, url])
+  @@index([status])
+  @@index([scrapedAt(sort: Desc)])
+  @@index([platform, postedByAccount, postedAt(sort: Desc)])
+  @@index([workspaceId, competitorMentioned, competitorSentiment])
+  @@index([workspaceId, isCompetitorOpportunity, scrapedAt(sort: Desc)])
+}
+
+model ActivityLog {
+  id          String   @id @default(uuid())
+  workspaceId String
+  userId      String
+  action      String
+  targetType  String   @default("")
+  targetId    String   @default("")
+  meta        Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+}
+
+model KeywordMetric {
+  id                 String   @id @default(uuid())
+  userId             String
+  keyword            String
+  date               DateTime
+  postsFound         Int      @default(0)
+  highRelevanceCount Int      @default(0)
+  avgRelevanceScore  Float    @default(0)
+  platforms          Json     @default("{}")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, keyword, date])
+}
+
+model TonePerformance {
+  id                 String   @id @default(uuid())
+  userId             String
+  platform           String
+  tone               String
+  totalPosts         Int      @default(0)
+  totalLikes         Int      @default(0)
+  totalReplies       Int      @default(0)
+  avgEngagementScore Float    @default(0)
+  lastUpdated        DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, platform, tone])
+}

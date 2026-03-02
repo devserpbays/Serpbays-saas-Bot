@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import KeywordMetric from '@/models/KeywordMetric';
+import { db } from '@/lib/db';
 import { getApiContext } from '@/lib/apiAuth';
 
 export async function GET(req: NextRequest) {
   const ctx = await getApiContext();
   if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  await connectDB();
 
   const { searchParams } = req.nextUrl;
   const days = parseInt(searchParams.get('days') || '14');
@@ -16,10 +13,13 @@ export async function GET(req: NextRequest) {
   sinceDate.setDate(sinceDate.getDate() - days);
   sinceDate.setHours(0, 0, 0, 0);
 
-  const metrics = await KeywordMetric.find({
-    userId: ctx.userId,
-    date: { $gte: sinceDate },
-  }).sort({ date: -1 }).lean();
+  const metrics = await db.keywordMetric.findMany({
+    where: {
+      userId: ctx.userId,
+      date: { gte: sinceDate },
+    },
+    orderBy: { date: 'desc' },
+  });
 
   // Aggregate by keyword
   const keywordMap: Record<string, {
@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   }> = {};
 
   for (const m of metrics) {
-    const kw = m.keyword as string;
+    const kw = m.keyword;
     if (!keywordMap[kw]) {
       keywordMap[kw] = {
         keyword: kw,
@@ -45,14 +45,14 @@ export async function GET(req: NextRequest) {
         dailyData: [],
       };
     }
-    keywordMap[kw].totalPosts += m.postsFound as number;
-    keywordMap[kw].totalHighRelevance += m.highRelevanceCount as number;
-    keywordMap[kw].scoreSum += (m.avgRelevanceScore as number) * (m.postsFound as number);
+    keywordMap[kw].totalPosts += m.postsFound;
+    keywordMap[kw].totalHighRelevance += m.highRelevanceCount;
+    keywordMap[kw].scoreSum += m.avgRelevanceScore * m.postsFound;
     keywordMap[kw].days++;
     keywordMap[kw].dailyData.push({
-      date: (m.date as Date).toISOString().split('T')[0],
-      postsFound: m.postsFound as number,
-      avgScore: m.avgRelevanceScore as number,
+      date: m.date.toISOString().split('T')[0],
+      postsFound: m.postsFound,
+      avgScore: m.avgRelevanceScore,
     });
   }
 

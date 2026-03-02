@@ -62,7 +62,7 @@ interface PipelineResult {
 }
 
 interface WorkspaceInfo {
-  _id: string;
+  id: string;
   name: string;
   slug: string;
   members: Array<{ userId: string; role: string }>;
@@ -153,7 +153,7 @@ export default function Dashboard() {
 
       if (session?.user?.activeWorkspaceId) {
         const active = (data.workspaces || []).find(
-          (w: WorkspaceInfo) => w._id === session.user.activeWorkspaceId
+          (w: WorkspaceInfo) => w.id === session.user.activeWorkspaceId
         );
         if (active) {
           setActiveWorkspace(active);
@@ -315,7 +315,7 @@ export default function Dashboard() {
         body: JSON.stringify({ workspaceId }),
       });
       await updateSession({ activeWorkspaceId: workspaceId });
-      const ws = workspaces.find(w => w._id === workspaceId);
+      const ws = workspaces.find(w => w.id === workspaceId);
       if (ws) {
         setActiveWorkspace(ws);
         const member = ws.members.find(m => m.userId === session?.user?.id);
@@ -336,7 +336,7 @@ export default function Dashboard() {
       });
       const data = await res.json();
       if (data.workspace) {
-        await handleWorkspaceSwitch(data.workspace._id);
+        await handleWorkspaceSwitch(data.workspace.id);
         fetchWorkspaces();
       }
     } catch {/* silent */}
@@ -437,7 +437,7 @@ export default function Dashboard() {
   };
 
   const handleReviewAction = async (id: string, status: 'approved' | 'rejected') => {
-    setReviewPosts((prev) => prev.filter((p) => p._id !== id));
+    setReviewPosts((prev) => prev.filter((p) => p.id !== id));
     await fetch('/api/posts', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -449,7 +449,7 @@ export default function Dashboard() {
 
   const handleBulkReview = async (status: 'approved' | 'rejected') => {
     setReviewBulkLoading(true);
-    const ids = reviewPosts.map((p) => p._id).filter(Boolean) as string[];
+    const ids = reviewPosts.map((p) => p.id).filter(Boolean) as string[];
     setReviewPosts([]);
     await Promise.all(
       ids.map((id) =>
@@ -519,9 +519,9 @@ export default function Dashboard() {
               <DropdownMenuContent align="start" className="w-64">
                 {workspaces.map((ws) => (
                   <DropdownMenuItem
-                    key={ws._id}
-                    onClick={() => handleWorkspaceSwitch(ws._id)}
-                    className={ws._id === activeWorkspace?._id ? 'bg-accent' : ''}
+                    key={ws.id}
+                    onClick={() => handleWorkspaceSwitch(ws.id)}
+                    className={ws.id === activeWorkspace?.id ? 'bg-accent' : ''}
                   >
                     {ws.name}
                     <span className="text-xs text-muted-foreground ml-auto">
@@ -1012,7 +1012,7 @@ export default function Dashboard() {
 
                     return (
                       <div
-                        key={post._id}
+                        key={post.id}
                         className={`rounded-lg border border-border ${borderColor} border-l-[3px] bg-card/50 hover:bg-card/80 transition-colors overflow-hidden`}
                       >
                         <div className="p-4">
@@ -1073,7 +1073,7 @@ export default function Dashboard() {
                                   variant="outline"
                                   size="sm"
                                   className="h-7 text-red-400 border-red-500/30 hover:bg-red-500/10"
-                                  onClick={() => handleReviewAction(post._id!, 'rejected')}
+                                  onClick={() => handleReviewAction(post.id!, 'rejected')}
                                 >
                                   <X className="w-3.5 h-3.5" />
                                   Reject
@@ -1082,7 +1082,7 @@ export default function Dashboard() {
                                   variant="outline"
                                   size="sm"
                                   className="h-7 text-green-400 border-green-500/30 hover:bg-green-500/10"
-                                  onClick={() => handleReviewAction(post._id!, 'approved')}
+                                  onClick={() => handleReviewAction(post.id!, 'approved')}
                                 >
                                   <Check className="w-3.5 h-3.5" />
                                   Accept
@@ -1215,7 +1215,7 @@ export default function Dashboard() {
             </Card>
           ) : (
             posts.map((post) => (
-              <PostCard key={post._id} post={post} onUpdate={handlePostUpdate} role={userRole} />
+              <PostCard key={post.id} post={post} onUpdate={handlePostUpdate} role={userRole} />
             ))
           )}
         </div>
@@ -1250,7 +1250,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      <SettingsPanel open={settingsOpen} onClose={handleSettingsClose} workspaceId={activeWorkspace?._id} role={userRole} defaultTab={settingsDefaultTab} />
+      <SettingsPanel open={settingsOpen} onClose={handleSettingsClose} workspaceId={activeWorkspace?.id} role={userRole} defaultTab={settingsDefaultTab} />
       <ProfilePanel open={profileOpen} onClose={() => setProfileOpen(false)} onOpenSettings={handleOpenSettingsToTab} />
     </div>
   );

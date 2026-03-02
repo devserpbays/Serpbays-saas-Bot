@@ -21,7 +21,7 @@ export interface WorkspaceMember {
 }
 
 export interface IWorkspace {
-  _id?: string;
+  id?: string;
   name: string;
   slug: string;
   ownerId: string;
@@ -31,7 +31,7 @@ export interface IWorkspace {
 }
 
 export interface IInvitation {
-  _id?: string;
+  id?: string;
   workspaceId: string;
   email: string;
   role: WorkspaceRole;
@@ -43,7 +43,7 @@ export interface IInvitation {
 }
 
 export interface IActivityLog {
-  _id?: string;
+  id?: string;
   workspaceId: string;
   userId: string;
   action: ActivityAction;
@@ -66,7 +66,7 @@ export interface ReplyVariation {
 }
 
 export interface IPost {
-  _id?: string;
+  id?: string;
   userId: string;
   workspaceId?: string;
   url: string;
@@ -108,7 +108,7 @@ export interface SocialAccount {
 }
 
 export interface ISettings {
-  _id?: string;
+  id?: string;
   userId: string;
   workspaceId?: string;
   companyName: string;
@@ -155,7 +155,7 @@ export interface KeywordSuggestion {
 }
 
 export interface IKeywordMetric {
-  _id?: string;
+  id?: string;
   userId: string;
   keyword: string;
   date: Date;
@@ -166,7 +166,7 @@ export interface IKeywordMetric {
 }
 
 export interface ITonePerformance {
-  _id?: string;
+  id?: string;
   userId: string;
   platform: string;
   tone: string;

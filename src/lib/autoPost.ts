@@ -1,9 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { connectDB } from '@/lib/mongodb';
-import Post from '@/models/Post';
-import Settings from '@/models/Settings';
-import ActivityLog from '@/models/ActivityLog';
+import { db } from '@/lib/db';
 import { getProfileDir } from '@/lib/profilePath';
 import { buildCookieList } from '@/lib/cookies';
 import { postTwitterReply } from '@/lib/platforms/twitter';
@@ -38,16 +35,13 @@ function sleep(ms: number): Promise<void> {
  * Called after evaluation in the pipeline.
  */
 export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> {
-  await connectDB();
-
   const result: AutoPostResult = { posted: 0, skipped: 0, errors: [], byPlatform: {} };
 
-  const settings = await Settings.findOne({ workspaceId }).lean();
+  const settings = await db.settings.findUnique({ where: { workspaceId } });
   if (!settings) return result;
 
-  const settingsObj = settings as Record<string, unknown>;
-  const userId = (settingsObj.userId as { toString(): string }).toString();
-  const enabledPlatforms = (settingsObj.platforms as string[]) || [];
+  const userId = settings.userId;
+  const enabledPlatforms = (settings.platforms as unknown as string[]) || [];
 
   // Build per-platform config: dailyLimit + account info
   const platformConfigs: Record<string, {
@@ -56,18 +50,20 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
     accountId: string;
   }> = {};
 
-  const accounts = (settingsObj.socialAccounts as Array<{
+  const accounts = (settings.socialAccounts as Array<{
     platform: string;
     accountIndex?: number;
     active?: boolean;
     id?: string;
   }>) || [];
 
+  const settingsRecord = settings as Record<string, unknown>;
+
   for (const platform of PLATFORMS) {
     if (!enabledPlatforms.includes(platform)) continue;
 
-    const limitKey = `${platform}DailyLimit` as string;
-    const dailyLimit = (settingsObj[limitKey] as number) ?? 5;
+    const limitKey = `${platform}DailyLimit`;
+    const dailyLimit = (settingsRecord[limitKey] as number) ?? 5;
 
     const account = accounts.find((a) => a.platform === platform && a.active !== false);
     if (!account) continue;
@@ -85,37 +81,34 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const postedToday = await Post.aggregate([
-    {
-      $match: {
-        workspaceId: workspaceId,
-        status: 'posted',
-        postedAt: { $gte: todayStart },
-      },
+  const postedTodayRows = await db.post.groupBy({
+    by: ['platform'],
+    where: {
+      workspaceId,
+      status: 'posted',
+      postedAt: { gte: todayStart },
     },
-    { $group: { _id: '$platform', count: { $sum: 1 } } },
-  ]);
+    _count: { id: true },
+  });
 
   const postedTodayMap: Record<string, number> = {};
-  for (const entry of postedToday) {
-    postedTodayMap[entry._id] = entry.count;
+  for (const row of postedTodayRows) {
+    postedTodayMap[row.platform] = row._count.id;
   }
 
   // Find approved posts, ordered by score (highest first)
-  const approvedPosts = await Post.find({
-    workspaceId,
-    status: 'approved',
-  })
-    .sort({ aiRelevanceScore: -1 })
-    .limit(50)
-    .lean();
+  const approvedPosts = await db.post.findMany({
+    where: { workspaceId, status: 'approved' },
+    orderBy: { aiRelevanceScore: 'desc' },
+    take: 50,
+  });
 
   if (!approvedPosts.length) return result;
 
   // Group posts by platform
   const postsByPlatform: Record<string, typeof approvedPosts> = {};
   for (const post of approvedPosts) {
-    const p = post.platform as string;
+    const p = post.platform;
     if (!platformConfigs[p]) {
       result.skipped++;
       continue;
@@ -197,14 +190,14 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
       let postedTone = '';
 
       if (post.editedReply) {
-        replyText = post.editedReply as string;
+        replyText = post.editedReply;
       } else if (
         (post.aiReplies as Array<{ text: string; tone: string; selected: boolean }> | undefined)?.length &&
         typeof post.selectedVariationIndex === 'number' &&
         post.selectedVariationIndex >= 0
       ) {
         const variations = post.aiReplies as Array<{ text: string; tone: string }>;
-        const variation = variations[post.selectedVariationIndex as number];
+        const variation = variations[post.selectedVariationIndex];
         if (variation) {
           replyText = variation.text;
           postedTone = variation.tone || '';
@@ -212,8 +205,8 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
       }
 
       if (!replyText && post.aiReply) {
-        replyText = post.aiReply as string;
-        postedTone = (post.aiTone as string) || '';
+        replyText = post.aiReply;
+        postedTone = post.aiTone || '';
       }
 
       if (!replyText) {
@@ -223,7 +216,7 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
 
       try {
         const postResult = await poster({
-          postUrl: post.url as string,
+          postUrl: post.url,
           replyText,
           cookieMap,
           cookieList,
@@ -231,31 +224,31 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
         });
 
         if (postResult.success) {
-          await Post.updateOne(
-            { _id: post._id },
-            {
-              $set: {
-                status: 'posted',
-                postedAt: new Date(),
-                autoPosted: true,
-                postedByAccount: accountId,
-                replyUrl: postResult.replyUrl || '',
-                postedTone,
-              },
-            }
-          );
-
-          await ActivityLog.create({
-            workspaceId,
-            userId,
-            action: 'post.auto_posted',
-            targetType: 'post',
-            targetId: (post._id as { toString(): string }).toString(),
-            meta: {
-              platform,
+          await db.post.update({
+            where: { id: post.id },
+            data: {
+              status: 'posted',
+              postedAt: new Date(),
+              autoPosted: true,
+              postedByAccount: accountId,
               replyUrl: postResult.replyUrl || '',
-              score: post.aiRelevanceScore,
-              accountId,
+              postedTone,
+            },
+          });
+
+          db.activityLog.create({
+            data: {
+              workspaceId,
+              userId,
+              action: 'post.auto_posted',
+              targetType: 'post',
+              targetId: post.id,
+              meta: {
+                platform,
+                replyUrl: postResult.replyUrl || '',
+                score: post.aiRelevanceScore,
+                accountId,
+              },
             },
           }).catch(() => { /* silent */ });
 
@@ -269,7 +262,7 @@ export async function runAutoPost(workspaceId: string): Promise<AutoPostResult> 
         const msg = err instanceof Error ? err.message : String(err);
         result.errors.push(`${platform}: ${msg}`);
         result.skipped++;
-        console.error(`Auto-post failed for ${platform} post ${post._id}:`, err);
+        console.error(`Auto-post failed for ${platform} post ${post.id}:`, err);
       }
     }
   }

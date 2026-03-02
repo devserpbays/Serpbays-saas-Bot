@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import Post from '@/models/Post';
-import ActivityLog from '@/models/ActivityLog';
+import { db } from '@/lib/db';
 import { getApiContext, requireRole } from '@/lib/apiAuth';
+import { Prisma } from '@prisma/client';
 
 export async function GET(req: NextRequest) {
   const ctx = await getApiContext();
   if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  await connectDB();
 
   const { searchParams } = req.nextUrl;
   const status = searchParams.get('status');
@@ -19,25 +16,25 @@ export async function GET(req: NextRequest) {
   const page = parseInt(searchParams.get('page') || '1');
   const limit = parseInt(searchParams.get('limit') || '20');
 
-  const filter: Record<string, unknown> = { workspaceId: ctx.workspaceId };
+  const where: Prisma.PostWhereInput = { workspaceId: ctx.workspaceId };
   if (status) {
-    filter.status = status;
+    where.status = status;
   } else {
-    // Default view: exclude auto-rejected posts (below threshold)
-    filter.status = { $ne: 'rejected' };
+    where.status = { not: 'rejected' };
   }
-  if (platform) filter.platform = platform;
-  if (minScore) filter.aiRelevanceScore = { $gte: parseInt(minScore) };
-  if (competitor) filter.competitorMentioned = competitor;
-  if (opportunities === 'true') filter.isCompetitorOpportunity = true;
+  if (platform) where.platform = platform;
+  if (minScore) where.aiRelevanceScore = { gte: parseInt(minScore) };
+  if (competitor) where.competitorMentioned = competitor;
+  if (opportunities === 'true') where.isCompetitorOpportunity = true;
 
   const [posts, total] = await Promise.all([
-    Post.find(filter)
-      .sort({ scrapedAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean(),
-    Post.countDocuments(filter),
+    db.post.findMany({
+      where,
+      orderBy: { scrapedAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    db.post.count({ where }),
   ]);
 
   return NextResponse.json({ posts, total, page, limit });
@@ -50,8 +47,6 @@ export async function PATCH(req: NextRequest) {
   if (!requireRole(ctx, 'owner', 'editor')) {
     return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
   }
-
-  await connectDB();
 
   const body = await req.json();
   const { id, status, editedReply, selectedVariationIndex } = body;
@@ -72,7 +67,7 @@ export async function PATCH(req: NextRequest) {
   if (selectedVariationIndex !== undefined && selectedVariationIndex >= 0) {
     update.selectedVariationIndex = selectedVariationIndex;
     // Load the post to get the selected variation's tone
-    const existingPost = await Post.findOne({ _id: id, workspaceId: ctx.workspaceId }).lean();
+    const existingPost = await db.post.findFirst({ where: { id, workspaceId: ctx.workspaceId } });
     if (existingPost) {
       const replies = existingPost.aiReplies as Array<{ text: string; tone: string }> | undefined;
       if (replies && replies[selectedVariationIndex]) {
@@ -86,15 +81,16 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  const post = await Post.findOneAndUpdate(
-    { _id: id, workspaceId: ctx.workspaceId },
-    update,
-    { new: true }
-  ).lean();
+  const post = await db.post.updateMany({
+    where: { id, workspaceId: ctx.workspaceId },
+    data: update,
+  });
 
-  if (!post) {
+  if (post.count === 0) {
     return NextResponse.json({ error: 'Post not found' }, { status: 404 });
   }
+
+  const updatedPost = await db.post.findUnique({ where: { id } });
 
   // Log activity
   if (status) {
@@ -105,25 +101,29 @@ export async function PATCH(req: NextRequest) {
     };
     const action = actionMap[status];
     if (action) {
-      await ActivityLog.create({
-        workspaceId: ctx.workspaceId,
-        userId: ctx.userId,
-        action,
-        targetType: 'post',
-        targetId: id,
+      await db.activityLog.create({
+        data: {
+          workspaceId: ctx.workspaceId,
+          userId: ctx.userId,
+          action,
+          targetType: 'post',
+          targetId: id,
+        },
       });
     }
   }
 
   if (editedReply !== undefined) {
-    await ActivityLog.create({
-      workspaceId: ctx.workspaceId,
-      userId: ctx.userId,
-      action: 'post.edited',
-      targetType: 'post',
-      targetId: id,
+    await db.activityLog.create({
+      data: {
+        workspaceId: ctx.workspaceId,
+        userId: ctx.userId,
+        action: 'post.edited',
+        targetType: 'post',
+        targetId: id,
+      },
     });
   }
 
-  return NextResponse.json({ post });
+  return NextResponse.json({ post: updatedPost });
 }

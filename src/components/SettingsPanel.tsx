@@ -34,7 +34,7 @@ interface MemberInfo {
 }
 
 interface InvitationInfo {
-  _id: string;
+  id: string;
   email: string;
   role: string;
   expiresAt: string;
@@ -802,7 +802,7 @@ export default function SettingsPanel({ open, onClose, workspaceId, role = 'owne
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-muted-foreground">Pending Invitations:</p>
                     {invitations.map((inv) => (
-                      <div key={inv._id} className="flex items-center justify-between text-xs text-muted-foreground">
+                      <div key={inv.id} className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>{inv.email}</span>
                         <Badge variant="outline" className="bg-yellow-500/10 text-yellow-400 border-yellow-500/30">pending ({inv.role})</Badge>
                       </div>

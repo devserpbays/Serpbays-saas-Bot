@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import Invitation from '@/models/Invitation';
-import Workspace from '@/models/Workspace';
-import User from '@/models/User';
-import ActivityLog from '@/models/ActivityLog';
+import { db } from '@/lib/db';
 import { getApiUserId } from '@/lib/apiAuth';
 
 export async function POST(req: NextRequest) {
@@ -15,65 +11,65 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invitation token is required' }, { status: 400 });
   }
 
-  await connectDB();
-
-  const invitation = await Invitation.findOne({ token, status: 'pending' });
+  const invitation = await db.invitation.findFirst({ where: { token, status: 'pending' } });
   if (!invitation) {
     return NextResponse.json({ error: 'Invalid or expired invitation' }, { status: 404 });
   }
 
   if (new Date() > invitation.expiresAt) {
-    invitation.status = 'expired';
-    await invitation.save();
+    await db.invitation.update({ where: { id: invitation.id }, data: { status: 'expired' } });
     return NextResponse.json({ error: 'Invitation has expired' }, { status: 410 });
   }
 
   // Verify email matches
-  const user = await User.findById(userId).lean();
-  if (!user || (user as { email: string }).email !== invitation.email) {
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user || user.email !== invitation.email) {
     return NextResponse.json({ error: 'Invitation was sent to a different email' }, { status: 403 });
   }
 
-  // Add to workspace
-  const workspace = await Workspace.findById(invitation.workspaceId);
+  // Check if workspace exists
+  const workspace = await db.workspace.findUnique({ where: { id: invitation.workspaceId } });
   if (!workspace) {
     return NextResponse.json({ error: 'Workspace no longer exists' }, { status: 404 });
   }
 
   // Check if already a member
-  const alreadyMember = workspace.members.some(
-    (m: { userId: { toString(): string } }) => m.userId.toString() === userId
-  );
-  if (alreadyMember) {
-    invitation.status = 'accepted';
-    await invitation.save();
-    return NextResponse.json({ success: true, workspaceId: workspace._id, message: 'Already a member' });
+  const existingMember = await db.workspaceMember.findFirst({
+    where: { workspaceId: invitation.workspaceId, userId },
+  });
+  if (existingMember) {
+    await db.invitation.update({ where: { id: invitation.id }, data: { status: 'accepted' } });
+    return NextResponse.json({ success: true, workspaceId: workspace.id, message: 'Already a member' });
   }
 
-  workspace.members.push({
-    userId,
-    role: invitation.role,
-    invitedBy: invitation.invitedBy,
-    invitedAt: invitation.createdAt,
-    joinedAt: new Date(),
-  });
-  await workspace.save();
-
-  invitation.status = 'accepted';
-  await invitation.save();
-
-  await ActivityLog.create({
-    workspaceId: workspace._id,
-    userId,
-    action: 'member.joined',
-    targetType: 'user',
-    targetId: userId,
-    meta: { role: invitation.role },
-  });
+  // Add to workspace
+  await db.$transaction([
+    db.workspaceMember.create({
+      data: {
+        workspaceId: invitation.workspaceId,
+        userId,
+        role: invitation.role,
+        invitedBy: invitation.invitedBy,
+        invitedAt: invitation.createdAt,
+        joinedAt: new Date(),
+      },
+    }),
+    db.invitation.update({ where: { id: invitation.id }, data: { status: 'accepted' } }),
+    db.activityLog.create({
+      data: {
+        workspaceId: workspace.id,
+        userId,
+        action: 'member.joined',
+        targetType: 'user',
+        targetId: userId,
+        meta: { role: invitation.role },
+      },
+    }),
+  ]);
 
   return NextResponse.json({
     success: true,
-    workspaceId: workspace._id,
+    workspaceId: workspace.id,
     workspaceName: workspace.name,
     role: invitation.role,
   });

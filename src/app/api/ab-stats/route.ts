@@ -1,17 +1,15 @@
 import { NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import TonePerformance from '@/models/TonePerformance';
+import { db } from '@/lib/db';
 import { getApiContext } from '@/lib/apiAuth';
 
 export async function GET() {
   const ctx = await getApiContext();
   if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  await connectDB();
-
-  const performances = await TonePerformance.find({ userId: ctx.userId })
-    .sort({ avgEngagementScore: -1 })
-    .lean();
+  const performances = await db.tonePerformance.findMany({
+    where: { userId: ctx.userId },
+    orderBy: { avgEngagementScore: 'desc' },
+  });
 
   // Group by platform
   const byPlatform: Record<string, Array<{
@@ -23,14 +21,13 @@ export async function GET() {
   }>> = {};
 
   for (const p of performances) {
-    const platform = p.platform as string;
-    if (!byPlatform[platform]) byPlatform[platform] = [];
-    byPlatform[platform].push({
-      tone: p.tone as string,
-      totalPosts: p.totalPosts as number,
-      totalLikes: p.totalLikes as number,
-      totalReplies: p.totalReplies as number,
-      avgEngagementScore: p.avgEngagementScore as number,
+    if (!byPlatform[p.platform]) byPlatform[p.platform] = [];
+    byPlatform[p.platform].push({
+      tone: p.tone,
+      totalPosts: p.totalPosts,
+      totalLikes: p.totalLikes,
+      totalReplies: p.totalReplies,
+      avgEngagementScore: p.avgEngagementScore,
     });
   }
 

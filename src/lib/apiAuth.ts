@@ -1,6 +1,5 @@
 import { auth } from '@/lib/auth';
-import { connectDB } from '@/lib/mongodb';
-import Workspace from '@/models/Workspace';
+import { db } from '@/lib/db';
 import type { ApiContext, WorkspaceRole } from '@/lib/types';
 
 /**
@@ -27,19 +26,9 @@ export async function getApiContext(): Promise<ApiContext | null> {
 
   if (!workspaceId) return null;
 
-  await connectDB();
-
-  const workspace = await Workspace.findOne({
-    _id: workspaceId,
-    'members.userId': userId,
-  }).lean();
-
-  if (!workspace) return null;
-
-  const members = workspace.members as Array<{ userId: { toString(): string }; role: string }>;
-  const member = members.find(
-    (m) => m.userId.toString() === userId
-  );
+  const member = await db.workspaceMember.findFirst({
+    where: { workspaceId, userId },
+  });
 
   if (!member) return null;
 

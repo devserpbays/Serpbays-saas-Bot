@@ -1,8 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { connectDB } from '@/lib/mongodb';
-import Post from '@/models/Post';
-import Settings from '@/models/Settings';
+import { db } from '@/lib/db';
 import { getProfileDir } from '@/lib/profilePath';
 import { scrapeTwitter } from '@/lib/platforms/twitter';
 import { scrapeReddit } from '@/lib/platforms/reddit';
@@ -31,17 +29,14 @@ const PLATFORMS: PlatformConfig[] = [
 ];
 
 export async function runScrape(workspaceId: string): Promise<ScrapeResult> {
-  await connectDB();
-
-  const settings = await Settings.findOne({ workspaceId }).lean();
+  const settings = await db.settings.findUnique({ where: { workspaceId } });
   if (!settings) {
     return { totalScraped: 0, newPosts: 0, errors: ['No settings found'] };
   }
 
-  const settingsObj = settings as Record<string, unknown>;
-  const userId = (settingsObj.userId as { toString(): string }).toString();
-  const enabledPlatforms = (settings.platforms as string[]) || [];
-  const globalKeywords = (settings.keywords as string[]) || [];
+  const userId = settings.userId;
+  const enabledPlatforms = (settings.platforms as unknown as string[]) || [];
+  const globalKeywords = (settings.keywords as unknown as string[]) || [];
   const errors: string[] = [];
   let totalScraped = 0;
 
@@ -50,8 +45,9 @@ export async function runScrape(workspaceId: string): Promise<ScrapeResult> {
     .filter((p) => enabledPlatforms.includes(p.name))
     .map(async (platform) => {
       try {
+        const settingsRecord = settings as Record<string, unknown>;
         // Platform-specific keywords with global fallback
-        const platformKeywords = (settingsObj[platform.keywordsField] as string[]) || [];
+        const platformKeywords = (settingsRecord[platform.keywordsField] as string[]) || [];
         const keywords = platformKeywords.length > 0 ? platformKeywords : globalKeywords;
         if (!keywords.length) return [];
 
@@ -99,8 +95,8 @@ export async function runScrape(workspaceId: string): Promise<ScrapeResult> {
           cookieMap,
           cookieList,
           profileDir,
-          subreddits: (settings.subreddits as string[]) || [],
-          facebookGroups: (settings.facebookGroups as string[]) || [],
+          subreddits: (settings.subreddits as unknown as string[]) || [],
+          facebookGroups: (settings.facebookGroups as unknown as string[]) || [],
         };
 
         return await platform.scrape(ctx);
@@ -118,31 +114,23 @@ export async function runScrape(workspaceId: string): Promise<ScrapeResult> {
     return { totalScraped: 0, newPosts: 0, errors };
   }
 
-  // Bulk upsert: only insert new posts, skip existing ones
-  const ops = allPosts.map((post) => ({
-    updateOne: {
-      filter: { workspaceId, url: post.url },
-      update: {
-        $setOnInsert: {
-          userId,
-          workspaceId,
-          url: post.url,
-          platform: post.platform,
-          author: post.author,
-          content: post.content,
-          scrapedAt: post.scrapedAt,
-          status: 'new',
-          likeCount: post.likeCount || 0,
-          replyCount: post.replyCount || 0,
-          viewCount: post.viewCount || 0,
-        },
-      },
-      upsert: true,
-    },
-  }));
+  // Bulk insert: only create new posts, skip existing ones (by workspaceId+url unique)
+  const result = await db.post.createMany({
+    data: allPosts.map((post) => ({
+      userId,
+      workspaceId,
+      url: post.url,
+      platform: post.platform,
+      author: post.author,
+      content: post.content,
+      scrapedAt: post.scrapedAt,
+      status: 'new',
+      likeCount: post.likeCount || 0,
+      replyCount: post.replyCount || 0,
+      viewCount: post.viewCount || 0,
+    })),
+    skipDuplicates: true,
+  });
 
-  const bulkResult = await Post.bulkWrite(ops, { ordered: false });
-  const newPosts = bulkResult.upsertedCount || 0;
-
-  return { totalScraped, newPosts, errors };
+  return { totalScraped, newPosts: result.count, errors };
 }

@@ -42,7 +42,7 @@ export default function PostCard({ post, onUpdate, role = 'owner' }: PostCardPro
     if (hasVariations && selectedVariation >= 0) {
       data.selectedVariationIndex = selectedVariation;
     }
-    await onUpdate(post._id!, data);
+    await onUpdate(post.id!, data);
     setLoading(false);
   };
 
@@ -53,12 +53,12 @@ export default function PostCard({ post, onUpdate, role = 'owner' }: PostCardPro
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: post._id }),
+        body: JSON.stringify({ id: post.id }),
       });
       const data = await res.json();
       if (data.success) {
         setPostResult(`Posted to ${platformLabel}!`);
-        await onUpdate(post._id!, {});
+        await onUpdate(post.id!, {});
       } else {
         setPostResult(`Error: ${data.error}`);
       }

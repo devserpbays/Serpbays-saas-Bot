@@ -1,9 +1,4 @@
-import { connectDB } from '@/lib/mongodb';
-import Post from '@/models/Post';
-import Settings from '@/models/Settings';
-import KeywordMetric from '@/models/KeywordMetric';
-import TonePerformance from '@/models/TonePerformance';
-import ActivityLog from '@/models/ActivityLog';
+import { db } from '@/lib/db';
 import type { AIEvaluation, EvaluateResult, Competitor, KeywordSuggestion } from '@/lib/types';
 
 const OPENCLAW_HOST = process.env.OPENCLAW_HOST || '127.0.0.1';
@@ -399,82 +394,81 @@ export async function updateKeywordMetrics(
     }
   }
 
-  const ops = Object.entries(metrics).map(([keyword, data]) => ({
-    updateOne: {
-      filter: { userId, keyword, date: today },
-      update: {
-        $inc: {
-          postsFound: data.postsFound,
-          highRelevanceCount: data.highRelevanceCount,
-        },
-        $set: {
-          avgRelevanceScore: data.totalScore / data.postsFound,
-          platforms: data.platforms,
-        },
+  const ops = Object.entries(metrics).map(([keyword, data]) =>
+    db.keywordMetric.upsert({
+      where: { userId_keyword_date: { userId, keyword, date: today } },
+      create: {
+        userId,
+        keyword,
+        date: today,
+        postsFound: data.postsFound,
+        highRelevanceCount: data.highRelevanceCount,
+        avgRelevanceScore: data.totalScore / data.postsFound,
+        platforms: data.platforms,
       },
-      upsert: true,
-    },
-  }));
+      update: {
+        postsFound: { increment: data.postsFound },
+        highRelevanceCount: { increment: data.highRelevanceCount },
+        avgRelevanceScore: data.totalScore / data.postsFound,
+        platforms: data.platforms,
+      },
+    })
+  );
 
   if (ops.length > 0) {
-    await KeywordMetric.bulkWrite(ops, { ordered: false });
+    await db.$transaction(ops);
   }
 }
 
 export async function runEvaluation(workspaceId: string): Promise<EvaluateResult> {
-  await connectDB();
-
-  const settings = await Settings.findOne({ workspaceId }).lean();
+  const settings = await db.settings.findUnique({ where: { workspaceId } });
   if (!settings) return { evaluated: 0, total: 0, autoApproved: 0 };
 
-  const settingsObj = settings as Record<string, unknown>;
-  const companyName = (settingsObj.companyName as string) || '';
-  const companyDescription = (settingsObj.companyDescription as string) || '';
-  const promptTemplate = (settingsObj.promptTemplate as string) || '';
-  const keywords = (settingsObj.keywords as string[]) || [];
-  const competitors = (settingsObj.competitors as Competitor[]) || [];
-  const abTestingEnabled = settingsObj.abTestingEnabled !== false;
-  const abTonePresets = (settingsObj.abTonePresets as string[]) || ['helpful', 'professional', 'witty'];
-  const abAutoOptimize = settingsObj.abAutoOptimize === true;
-  const competitorAlertThreshold = (settingsObj.competitorAlertThreshold as number) || 60;
-  const userId = (settingsObj.userId as { toString(): string }).toString();
-  const workspaceIdStr = (settingsObj.workspaceId as { toString(): string })?.toString() || '';
+  const companyName = settings.companyName || '';
+  const companyDescription = settings.companyDescription || '';
+  const promptTemplate = settings.promptTemplate || '';
+  const keywords = (settings.keywords as unknown as string[]) || [];
+  const competitors = (settings.competitors as unknown as Competitor[]) || [];
+  const abTestingEnabled = settings.abTestingEnabled !== false;
+  const abTonePresets = (settings.abTonePresets as unknown as string[]) || ['helpful', 'professional', 'witty'];
+  const abAutoOptimize = settings.abAutoOptimize === true;
+  const competitorAlertThreshold = settings.competitorAlertThreshold || 60;
+  const userId = settings.userId;
 
   // Per-platform auto-approve thresholds
   const autoPostThresholds: Record<string, number> = {
-    facebook: (settingsObj.facebookAutoPostThreshold as number) ?? 70,
-    twitter: (settingsObj.twitterAutoPostThreshold as number) ?? 70,
-    reddit: (settingsObj.redditAutoPostThreshold as number) ?? 70,
-    quora: (settingsObj.quoraAutoPostThreshold as number) ?? 70,
-    youtube: (settingsObj.youtubeAutoPostThreshold as number) ?? 70,
-    pinterest: (settingsObj.pinterestAutoPostThreshold as number) ?? 70,
+    facebook: settings.facebookAutoPostThreshold ?? 70,
+    twitter: settings.twitterAutoPostThreshold ?? 70,
+    reddit: settings.redditAutoPostThreshold ?? 70,
+    quora: settings.quoraAutoPostThreshold ?? 70,
+    youtube: settings.youtubeAutoPostThreshold ?? 70,
+    pinterest: settings.pinterestAutoPostThreshold ?? 70,
   };
 
   // Find posts with status 'new', limit batch size
-  const posts = await Post.find({ workspaceId, status: 'new' })
-    .sort({ scrapedAt: -1 })
-    .limit(EVAL_BATCH_SIZE)
-    .lean();
+  const posts = await db.post.findMany({
+    where: { workspaceId, status: 'new' },
+    orderBy: { scrapedAt: 'desc' },
+    take: EVAL_BATCH_SIZE,
+  });
 
   if (!posts.length) return { evaluated: 0, total: 0, autoApproved: 0 };
 
-  const postIds = posts.map((p) => p._id);
+  const postIds = posts.map((p) => p.id);
 
   // Mark all as 'evaluating' for UI progress indicator
-  await Post.updateMany(
-    { _id: { $in: postIds } },
-    { $set: { status: 'evaluating' } }
-  );
+  await db.post.updateMany({
+    where: { id: { in: postIds } },
+    data: { status: 'evaluating' },
+  });
 
   // Load tone performance data for auto-optimize
   let toneHints = '';
   if (abTestingEnabled && abAutoOptimize) {
-    const perfData = await TonePerformance.find({ userId }).lean();
-    const perfArray = (perfData as Array<{ platform: string; tone: string; avgEngagementScore: number; totalPosts: number }>);
-    if (perfArray.length > 0) {
-      // Build hints for each platform that has data
-      const platforms = [...new Set(perfArray.map(p => p.platform))];
-      toneHints = platforms.map(p => `${p}:\n${buildPlatformToneHints(perfArray, p)}`).join('\n\n');
+    const perfData = await db.tonePerformance.findMany({ where: { userId } });
+    if (perfData.length > 0) {
+      const platforms = [...new Set(perfData.map(p => p.platform))];
+      toneHints = platforms.map(p => `${p}:\n${buildPlatformToneHints(perfData, p)}`).join('\n\n');
     }
   }
 
@@ -491,7 +485,7 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
 
     const post = posts[i];
     try {
-      const content = post.content as string;
+      const content = post.content;
       const result = await evaluatePost(
         content,
         companyName,
@@ -505,7 +499,7 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
       const matched = findMatchedKeywords(content, keywords);
 
       // Check auto-approve threshold for this platform
-      const platform = post.platform as string;
+      const platform = post.platform;
       const threshold = autoPostThresholds[platform] ?? 70;
       const shouldAutoApprove = result.relevant && result.score >= threshold;
       const belowThreshold = !result.relevant || result.score < threshold;
@@ -560,21 +554,23 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
         }));
       }
 
-      await Post.updateOne(
-        { _id: post._id },
-        { $set: updateData }
-      );
+      await db.post.update({
+        where: { id: post.id },
+        data: updateData,
+      });
 
       // Log auto-approval to activity feed
-      if (shouldAutoApprove && workspaceIdStr) {
+      if (shouldAutoApprove) {
         try {
-          await ActivityLog.create({
-            workspaceId: workspaceIdStr,
-            userId,
-            action: 'post.auto_approved',
-            targetType: 'post',
-            targetId: (post._id as { toString(): string }).toString(),
-            meta: { score: result.score, threshold, platform },
+          await db.activityLog.create({
+            data: {
+              workspaceId,
+              userId,
+              action: 'post.auto_approved',
+              targetType: 'post',
+              targetId: post.id,
+              meta: { score: result.score, threshold, platform },
+            },
           });
         } catch { /* silent — don't fail pipeline for logging */ }
       }
@@ -582,17 +578,17 @@ export async function runEvaluation(workspaceId: string): Promise<EvaluateResult
       evaluatedPostsForMetrics.push({
         keywordsMatched: matched,
         aiRelevanceScore: result.score,
-        platform: post.platform as string,
+        platform: post.platform,
       });
 
       evaluated++;
     } catch (err) {
-      console.error(`Failed to evaluate post ${post._id}:`, err);
+      console.error(`Failed to evaluate post ${post.id}:`, err);
       // On error, revert to 'new'
-      await Post.updateOne(
-        { _id: post._id },
-        { $set: { status: 'new' } }
-      );
+      await db.post.update({
+        where: { id: post.id },
+        data: { status: 'new' },
+      });
     }
   }
 

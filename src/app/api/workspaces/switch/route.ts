@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import Workspace from '@/models/Workspace';
-import User from '@/models/User';
+import { db } from '@/lib/db';
 import { getApiUserId } from '@/lib/apiAuth';
 
 export async function POST(req: NextRequest) {
@@ -13,27 +11,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 });
   }
 
-  await connectDB();
-
   // Verify membership
-  const workspace = await Workspace.findOne({
-    _id: workspaceId,
-    'members.userId': userId,
-  }).lean();
+  const member = await db.workspaceMember.findFirst({
+    where: { workspaceId, userId },
+    include: { workspace: true },
+  });
 
-  if (!workspace) {
+  if (!member) {
     return NextResponse.json({ error: 'Workspace not found or not a member' }, { status: 404 });
   }
 
   // Update user's active workspace
-  await User.updateOne(
-    { _id: userId },
-    { $set: { activeWorkspaceId: workspaceId } }
-  );
+  await db.user.update({
+    where: { id: userId },
+    data: { activeWorkspaceId: workspaceId },
+  });
 
   return NextResponse.json({
     success: true,
     workspaceId,
-    workspaceName: workspace.name,
+    workspaceName: member.workspace.name,
   });
 }

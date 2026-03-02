@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import Settings from '@/models/Settings';
-import ActivityLog from '@/models/ActivityLog';
+import { db } from '@/lib/db';
 import { getApiContext, requireRole } from '@/lib/apiAuth';
 
 export async function GET() {
   const ctx = await getApiContext();
   if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  await connectDB();
-  const settings = await Settings.findOne({ workspaceId: ctx.workspaceId }).lean();
+  const settings = await db.settings.findUnique({ where: { workspaceId: ctx.workspaceId } });
   return NextResponse.json({ settings });
 }
 
@@ -21,7 +18,6 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
   }
 
-  await connectDB();
   const body = await req.json();
 
   const {
@@ -37,46 +33,43 @@ export async function PUT(req: NextRequest) {
     abTestingEnabled, abVariationCount, abTonePresets, abAutoOptimize,
   } = body;
 
-  let settings = await Settings.findOne({ workspaceId: ctx.workspaceId });
+  const updateData: Record<string, unknown> = {};
+  if (companyName !== undefined) updateData.companyName = companyName;
+  if (companyDescription !== undefined) updateData.companyDescription = companyDescription;
+  if (keywords !== undefined) updateData.keywords = keywords;
+  if (platforms !== undefined) updateData.platforms = platforms;
+  if (subreddits !== undefined) updateData.subreddits = subreddits;
+  if (promptTemplate !== undefined) updateData.promptTemplate = promptTemplate;
+  if (socialAccounts !== undefined) updateData.socialAccounts = socialAccounts;
+  if (facebookGroups !== undefined) updateData.facebookGroups = facebookGroups;
+  if (facebookKeywords !== undefined) updateData.facebookKeywords = facebookKeywords;
+  if (facebookDailyLimit !== undefined) updateData.facebookDailyLimit = facebookDailyLimit;
+  if (facebookAutoPostThreshold !== undefined) updateData.facebookAutoPostThreshold = facebookAutoPostThreshold;
+  if (twitterKeywords !== undefined) updateData.twitterKeywords = twitterKeywords;
+  if (twitterDailyLimit !== undefined) updateData.twitterDailyLimit = twitterDailyLimit;
+  if (twitterAutoPostThreshold !== undefined) updateData.twitterAutoPostThreshold = twitterAutoPostThreshold;
+  if (redditKeywords !== undefined) updateData.redditKeywords = redditKeywords;
+  if (redditDailyLimit !== undefined) updateData.redditDailyLimit = redditDailyLimit;
+  if (redditAutoPostThreshold !== undefined) updateData.redditAutoPostThreshold = redditAutoPostThreshold;
+  if (quoraKeywords !== undefined) updateData.quoraKeywords = quoraKeywords;
+  if (quoraDailyLimit !== undefined) updateData.quoraDailyLimit = quoraDailyLimit;
+  if (quoraAutoPostThreshold !== undefined) updateData.quoraAutoPostThreshold = quoraAutoPostThreshold;
+  if (youtubeKeywords !== undefined) updateData.youtubeKeywords = youtubeKeywords;
+  if (youtubeDailyLimit !== undefined) updateData.youtubeDailyLimit = youtubeDailyLimit;
+  if (youtubeAutoPostThreshold !== undefined) updateData.youtubeAutoPostThreshold = youtubeAutoPostThreshold;
+  if (pinterestKeywords !== undefined) updateData.pinterestKeywords = pinterestKeywords;
+  if (pinterestDailyLimit !== undefined) updateData.pinterestDailyLimit = pinterestDailyLimit;
+  if (pinterestAutoPostThreshold !== undefined) updateData.pinterestAutoPostThreshold = pinterestAutoPostThreshold;
+  if (competitors !== undefined) updateData.competitors = competitors;
+  if (competitorAlertThreshold !== undefined) updateData.competitorAlertThreshold = competitorAlertThreshold;
+  if (abTestingEnabled !== undefined) updateData.abTestingEnabled = abTestingEnabled;
+  if (abVariationCount !== undefined) updateData.abVariationCount = abVariationCount;
+  if (abTonePresets !== undefined) updateData.abTonePresets = abTonePresets;
+  if (abAutoOptimize !== undefined) updateData.abAutoOptimize = abAutoOptimize;
 
-  if (settings) {
-    settings.companyName = companyName ?? settings.companyName;
-    settings.companyDescription = companyDescription ?? settings.companyDescription;
-    settings.keywords = keywords ?? settings.keywords;
-    settings.platforms = platforms ?? settings.platforms;
-    settings.subreddits = subreddits ?? settings.subreddits;
-    settings.promptTemplate = promptTemplate ?? settings.promptTemplate;
-    if (socialAccounts !== undefined) settings.socialAccounts = socialAccounts;
-    if (facebookGroups !== undefined) settings.facebookGroups = facebookGroups;
-    if (facebookKeywords !== undefined) settings.facebookKeywords = facebookKeywords;
-    if (facebookDailyLimit !== undefined) settings.facebookDailyLimit = facebookDailyLimit;
-    if (facebookAutoPostThreshold !== undefined) settings.facebookAutoPostThreshold = facebookAutoPostThreshold;
-    if (twitterKeywords !== undefined) settings.twitterKeywords = twitterKeywords;
-    if (twitterDailyLimit !== undefined) settings.twitterDailyLimit = twitterDailyLimit;
-    if (twitterAutoPostThreshold !== undefined) settings.twitterAutoPostThreshold = twitterAutoPostThreshold;
-    if (redditKeywords !== undefined) settings.redditKeywords = redditKeywords;
-    if (redditDailyLimit !== undefined) settings.redditDailyLimit = redditDailyLimit;
-    if (redditAutoPostThreshold !== undefined) settings.redditAutoPostThreshold = redditAutoPostThreshold;
-    if (quoraKeywords !== undefined) settings.quoraKeywords = quoraKeywords;
-    if (quoraDailyLimit !== undefined) settings.quoraDailyLimit = quoraDailyLimit;
-    if (quoraAutoPostThreshold !== undefined) settings.quoraAutoPostThreshold = quoraAutoPostThreshold;
-    if (youtubeKeywords !== undefined) settings.youtubeKeywords = youtubeKeywords;
-    if (youtubeDailyLimit !== undefined) settings.youtubeDailyLimit = youtubeDailyLimit;
-    if (youtubeAutoPostThreshold !== undefined) settings.youtubeAutoPostThreshold = youtubeAutoPostThreshold;
-    if (pinterestKeywords !== undefined) settings.pinterestKeywords = pinterestKeywords;
-    if (pinterestDailyLimit !== undefined) settings.pinterestDailyLimit = pinterestDailyLimit;
-    if (pinterestAutoPostThreshold !== undefined) settings.pinterestAutoPostThreshold = pinterestAutoPostThreshold;
-    // Competitor fields
-    if (competitors !== undefined) settings.competitors = competitors;
-    if (competitorAlertThreshold !== undefined) settings.competitorAlertThreshold = competitorAlertThreshold;
-    // A/B Testing fields
-    if (abTestingEnabled !== undefined) settings.abTestingEnabled = abTestingEnabled;
-    if (abVariationCount !== undefined) settings.abVariationCount = abVariationCount;
-    if (abTonePresets !== undefined) settings.abTonePresets = abTonePresets;
-    if (abAutoOptimize !== undefined) settings.abAutoOptimize = abAutoOptimize;
-    await settings.save();
-  } else {
-    settings = await Settings.create({
+  const settings = await db.settings.upsert({
+    where: { workspaceId: ctx.workspaceId },
+    create: {
       userId: ctx.userId,
       workspaceId: ctx.workspaceId,
       companyName: companyName || 'My Company',
@@ -111,16 +104,19 @@ export async function PUT(req: NextRequest) {
       abVariationCount: abVariationCount ?? 3,
       abTonePresets: abTonePresets || ['helpful', 'professional', 'witty'],
       abAutoOptimize: abAutoOptimize ?? false,
-    });
-  }
+    },
+    update: updateData,
+  });
 
   // Log activity
-  await ActivityLog.create({
-    workspaceId: ctx.workspaceId,
-    userId: ctx.userId,
-    action: 'settings.updated',
-    targetType: 'settings',
-    targetId: (settings._id as { toString(): string }).toString(),
+  await db.activityLog.create({
+    data: {
+      workspaceId: ctx.workspaceId,
+      userId: ctx.userId,
+      action: 'settings.updated',
+      targetType: 'settings',
+      targetId: settings.id,
+    },
   });
 
   return NextResponse.json({ settings });

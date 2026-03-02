@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import Workspace from '@/models/Workspace';
-import User from '@/models/User';
-import ActivityLog from '@/models/ActivityLog';
+import { db } from '@/lib/db';
 import { getApiUserId } from '@/lib/apiAuth';
 
 export async function GET(
@@ -13,34 +10,29 @@ export async function GET(
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  await connectDB();
 
-  const workspace = await Workspace.findOne({
-    _id: id,
-    'members.userId': userId,
-  }).lean();
+  const myMembership = await db.workspaceMember.findFirst({
+    where: { workspaceId: id, userId },
+  });
 
-  if (!workspace) {
+  if (!myMembership) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  // Enrich members with user info
-  const memberUserIds = (workspace.members as Array<{ userId: { toString(): string } }>).map(m => m.userId.toString());
-  const users = await User.find({ _id: { $in: memberUserIds } }).select('name email').lean();
-  const userMap = new Map(users.map(u => [(u._id as { toString(): string }).toString(), u]));
-
-  const members = (workspace.members as Array<{ userId: { toString(): string }; role: string; joinedAt?: Date }>).map(m => {
-    const user = userMap.get(m.userId.toString());
-    return {
-      userId: m.userId.toString(),
-      role: m.role,
-      joinedAt: m.joinedAt,
-      name: (user as { name?: string })?.name || '',
-      email: (user as { email?: string })?.email || '',
-    };
+  const members = await db.workspaceMember.findMany({
+    where: { workspaceId: id },
+    include: { user: { select: { name: true, email: true } } },
   });
 
-  return NextResponse.json({ members });
+  const enrichedMembers = members.map(m => ({
+    userId: m.userId,
+    role: m.role,
+    joinedAt: m.joinedAt,
+    name: m.user.name,
+    email: m.user.email,
+  }));
+
+  return NextResponse.json({ members: enrichedMembers });
 }
 
 export async function PATCH(
@@ -51,21 +43,16 @@ export async function PATCH(
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  await connectDB();
 
-  const workspace = await Workspace.findOne({
-    _id: id,
-    'members.userId': userId,
+  const myMember = await db.workspaceMember.findFirst({
+    where: { workspaceId: id, userId },
   });
 
-  if (!workspace) {
+  if (!myMember) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  const currentMember = workspace.members.find(
-    (m: { userId: { toString(): string } }) => m.userId.toString() === userId
-  );
-  if (!currentMember || currentMember.role !== 'owner') {
+  if (myMember.role !== 'owner') {
     return NextResponse.json({ error: 'Only owners can change roles' }, { status: 403 });
   }
 
@@ -78,9 +65,9 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid role' }, { status: 400 });
   }
 
-  const target = workspace.members.find(
-    (m: { userId: { toString(): string } }) => m.userId.toString() === memberId
-  );
+  const target = await db.workspaceMember.findFirst({
+    where: { workspaceId: id, userId: memberId },
+  });
   if (!target) {
     return NextResponse.json({ error: 'Member not found' }, { status: 404 });
   }
@@ -89,8 +76,10 @@ export async function PATCH(
     return NextResponse.json({ error: 'Cannot change owner role' }, { status: 400 });
   }
 
-  target.role = role;
-  await workspace.save();
+  await db.workspaceMember.update({
+    where: { workspaceId_userId: { workspaceId: id, userId: memberId } },
+    data: { role },
+  });
 
   return NextResponse.json({ success: true });
 }
@@ -103,21 +92,16 @@ export async function DELETE(
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  await connectDB();
 
-  const workspace = await Workspace.findOne({
-    _id: id,
-    'members.userId': userId,
+  const myMember = await db.workspaceMember.findFirst({
+    where: { workspaceId: id, userId },
   });
 
-  if (!workspace) {
+  if (!myMember) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  const currentMember = workspace.members.find(
-    (m: { userId: { toString(): string } }) => m.userId.toString() === userId
-  );
-  if (!currentMember || currentMember.role !== 'owner') {
+  if (myMember.role !== 'owner') {
     return NextResponse.json({ error: 'Only owners can remove members' }, { status: 403 });
   }
 
@@ -131,17 +115,18 @@ export async function DELETE(
     return NextResponse.json({ error: 'Cannot remove yourself' }, { status: 400 });
   }
 
-  workspace.members = workspace.members.filter(
-    (m: { userId: { toString(): string } }) => m.userId.toString() !== memberId
-  );
-  await workspace.save();
+  await db.workspaceMember.delete({
+    where: { workspaceId_userId: { workspaceId: id, userId: memberId } },
+  });
 
-  await ActivityLog.create({
-    workspaceId: id,
-    userId,
-    action: 'member.removed',
-    targetType: 'user',
-    targetId: memberId,
+  await db.activityLog.create({
+    data: {
+      workspaceId: id,
+      userId,
+      action: 'member.removed',
+      targetType: 'user',
+      targetId: memberId,
+    },
   });
 
   return NextResponse.json({ success: true });

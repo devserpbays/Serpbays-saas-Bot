@@ -1,20 +1,16 @@
 import { NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import Post from '@/models/Post';
-import TonePerformance from '@/models/TonePerformance';
+import { db } from '@/lib/db';
 import { getApiContext } from '@/lib/apiAuth';
 
 export async function GET() {
   const ctx = await getApiContext();
   if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  await connectDB();
-
   const statuses = ['new', 'evaluating', 'evaluated', 'approved', 'rejected', 'posted'] as const;
 
   const [total, ...counts] = await Promise.all([
-    Post.countDocuments({ workspaceId: ctx.workspaceId }),
-    ...statuses.map(s => Post.countDocuments({ workspaceId: ctx.workspaceId, status: s })),
+    db.post.count({ where: { workspaceId: ctx.workspaceId } }),
+    ...statuses.map(s => db.post.count({ where: { workspaceId: ctx.workspaceId, status: s } })),
   ]);
 
   const byStatus: Record<string, number> = {};
@@ -22,8 +18,8 @@ export async function GET() {
 
   const platforms = ['facebook', 'twitter', 'reddit', 'quora', 'youtube', 'pinterest'] as const;
   const platformCounts = await Promise.all([
-    ...platforms.map(p => Post.countDocuments({ workspaceId: ctx.workspaceId, platform: p })),
-    ...platforms.map(p => Post.countDocuments({ workspaceId: ctx.workspaceId, platform: p, status: 'posted' })),
+    ...platforms.map(p => db.post.count({ where: { workspaceId: ctx.workspaceId, platform: p } })),
+    ...platforms.map(p => db.post.count({ where: { workspaceId: ctx.workspaceId, platform: p, status: 'posted' } })),
   ]);
 
   const byPlatform: Record<string, number> = {};
@@ -35,21 +31,24 @@ export async function GET() {
 
   // Auto counts
   const [autoApprovedCount, autoPostedCount] = await Promise.all([
-    Post.countDocuments({ workspaceId: ctx.workspaceId, autoApproved: true }),
-    Post.countDocuments({ workspaceId: ctx.workspaceId, autoPosted: true }),
+    db.post.count({ where: { workspaceId: ctx.workspaceId, autoApproved: true } }),
+    db.post.count({ where: { workspaceId: ctx.workspaceId, autoPosted: true } }),
   ]);
 
   // Competitor opportunities count
-  const competitorOpportunities = await Post.countDocuments({
-    workspaceId: ctx.workspaceId,
-    isCompetitorOpportunity: true,
-    status: { $nin: ['approved', 'posted'] },
+  const competitorOpportunities = await db.post.count({
+    where: {
+      workspaceId: ctx.workspaceId,
+      isCompetitorOpportunity: true,
+      status: { notIn: ['approved', 'posted'] },
+    },
   });
 
   // Tone performance
-  const tonePerformance = await TonePerformance.find({ userId: ctx.userId })
-    .sort({ avgEngagementScore: -1 })
-    .lean();
+  const tonePerformance = await db.tonePerformance.findMany({
+    where: { userId: ctx.userId },
+    orderBy: { avgEngagementScore: 'desc' },
+  });
 
   return NextResponse.json({
     total,

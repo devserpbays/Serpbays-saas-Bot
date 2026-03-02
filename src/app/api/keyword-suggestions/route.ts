@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import Settings from '@/models/Settings';
+import { db } from '@/lib/db';
 import { getApiContext, requireRole } from '@/lib/apiAuth';
 import { suggestKeywords } from '@/lib/ai';
 import type { Competitor } from '@/lib/types';
@@ -12,9 +11,7 @@ export async function POST() {
     return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
   }
 
-  await connectDB();
-
-  const settings = await Settings.findOne({ workspaceId: ctx.workspaceId });
+  const settings = await db.settings.findUnique({ where: { workspaceId: ctx.workspaceId } });
   if (!settings) {
     return NextResponse.json({ error: 'Settings not found' }, { status: 404 });
   }
@@ -22,14 +19,18 @@ export async function POST() {
   const suggestions = await suggestKeywords(
     settings.companyName,
     settings.companyDescription,
-    settings.keywords || [],
-    (settings.competitors as Competitor[]) || undefined
+    (settings.keywords as unknown as string[]) || [],
+    (settings.competitors as unknown as Competitor[]) || undefined
   );
 
   // Save suggested keywords
-  settings.suggestedKeywords = suggestions.map(s => s.keyword);
-  settings.keywordSuggestionsLastRun = new Date();
-  await settings.save();
+  await db.settings.update({
+    where: { workspaceId: ctx.workspaceId },
+    data: {
+      suggestedKeywords: suggestions.map(s => s.keyword),
+      keywordSuggestionsLastRun: new Date(),
+    },
+  });
 
   return NextResponse.json({ suggestions });
 }

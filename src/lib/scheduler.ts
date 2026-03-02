@@ -1,5 +1,4 @@
-import { connectDB } from '@/lib/mongodb';
-import Settings from '@/models/Settings';
+import { db } from '@/lib/db';
 import { runScrape } from '@/lib/scraper';
 import { runEvaluation } from '@/lib/ai';
 import { runAutoPost } from '@/lib/autoPost';
@@ -112,17 +111,15 @@ async function executePipeline(entry: SchedulerEntry): Promise<void> {
   const startedAt = new Date();
 
   try {
-    await connectDB();
-
     // Re-read schedules to check if still within window
-    const settings = await Settings.findOne({ workspaceId: entry.workspaceId }).lean();
+    const settings = await db.settings.findUnique({ where: { workspaceId: entry.workspaceId } });
     if (!settings) {
       entry.error = 'Settings not found';
       entry.running = false;
       return;
     }
 
-    const schedules = (settings as Record<string, unknown>).platformSchedules as Record<string, PlatformSchedule> | undefined;
+    const schedules = (settings.platformSchedules as unknown as Record<string, PlatformSchedule> | undefined) ?? {};
     if (schedules && !isWithinScheduleWindow(schedules)) {
       // Outside schedule window — skip this cycle silently
       entry.running = false;
@@ -166,13 +163,12 @@ export async function startScheduler(workspaceId: string): Promise<SchedulerStat
   // Stop existing scheduler if any
   stopScheduler(workspaceId);
 
-  await connectDB();
-  const settings = await Settings.findOne({ workspaceId }).lean();
+  const settings = await db.settings.findUnique({ where: { workspaceId } });
   if (!settings) {
     throw new Error('Settings not found for workspace');
   }
 
-  const schedules = (settings as Record<string, unknown>).platformSchedules as Record<string, PlatformSchedule> | undefined || {};
+  const schedules = (settings.platformSchedules as unknown as Record<string, PlatformSchedule> | undefined) || {};
   const intervalMs = resolveIntervalMs(schedules);
 
   const entry: SchedulerEntry = {

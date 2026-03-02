@@ -1,21 +1,19 @@
 import { NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import Post from '@/models/Post';
-import TonePerformance from '@/models/TonePerformance';
+import { db } from '@/lib/db';
 import { getApiContext } from '@/lib/apiAuth';
 
 export async function POST() {
   const ctx = await getApiContext();
   if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  await connectDB();
-
   // Find posted replies with tone info
-  const postedPosts = await Post.find({
-    workspaceId: ctx.workspaceId,
-    status: 'posted',
-    postedTone: { $ne: '' },
-  }).lean();
+  const postedPosts = await db.post.findMany({
+    where: {
+      workspaceId: ctx.workspaceId,
+      status: 'posted',
+      postedTone: { not: '' },
+    },
+  });
 
   if (!postedPosts.length) {
     return NextResponse.json({ updated: 0 });
@@ -44,25 +42,30 @@ export async function POST() {
     const [platform, tone] = key.split(':');
     const avgEngagementScore = (data.totalLikes + data.totalReplies * 2) / data.totalPosts;
 
-    return {
-      updateOne: {
-        filter: { userId: ctx.userId, platform, tone },
-        update: {
-          $set: {
-            totalPosts: data.totalPosts,
-            totalLikes: data.totalLikes,
-            totalReplies: data.totalReplies,
-            avgEngagementScore,
-            lastUpdated: new Date(),
-          },
-        },
-        upsert: true,
+    return db.tonePerformance.upsert({
+      where: { userId_platform_tone: { userId: ctx.userId, platform, tone } },
+      create: {
+        userId: ctx.userId,
+        platform,
+        tone,
+        totalPosts: data.totalPosts,
+        totalLikes: data.totalLikes,
+        totalReplies: data.totalReplies,
+        avgEngagementScore,
+        lastUpdated: new Date(),
       },
-    };
+      update: {
+        totalPosts: data.totalPosts,
+        totalLikes: data.totalLikes,
+        totalReplies: data.totalReplies,
+        avgEngagementScore,
+        lastUpdated: new Date(),
+      },
+    });
   });
 
   if (ops.length > 0) {
-    await TonePerformance.bulkWrite(ops, { ordered: false });
+    await db.$transaction(ops);
   }
 
   return NextResponse.json({ updated: ops.length });

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 
 interface ActivityLog {
-  _id: string;
+  id: string;
   action: string;
   userName: string;
   targetType?: string;
@@ -144,7 +144,7 @@ export default function ActivityFeed() {
         const metaPlatform = log.meta?.platform as string | undefined;
 
         return (
-          <div key={log._id} className="flex items-start gap-3 text-sm py-2 px-2 rounded-lg hover:bg-accent transition-colors">
+          <div key={log.id} className="flex items-start gap-3 text-sm py-2 px-2 rounded-lg hover:bg-accent transition-colors">
             <span className={`w-7 h-7 rounded-full ${config.bg} flex items-center justify-center flex-shrink-0 mt-0.5`}>
               {config.icon}
             </span>

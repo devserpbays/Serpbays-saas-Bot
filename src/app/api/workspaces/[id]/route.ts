@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
-import Workspace from '@/models/Workspace';
-import Settings from '@/models/Settings';
-import Post from '@/models/Post';
-import ActivityLog from '@/models/ActivityLog';
+import { db } from '@/lib/db';
 import { getApiUserId } from '@/lib/apiAuth';
 
 export async function GET(
@@ -14,18 +10,17 @@ export async function GET(
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  await connectDB();
 
-  const workspace = await Workspace.findOne({
-    _id: id,
-    'members.userId': userId,
-  }).lean();
+  const member = await db.workspaceMember.findFirst({
+    where: { workspaceId: id, userId },
+    include: { workspace: true },
+  });
 
-  if (!workspace) {
+  if (!member) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  return NextResponse.json({ workspace });
+  return NextResponse.json({ workspace: member.workspace });
 }
 
 export async function PATCH(
@@ -36,36 +31,35 @@ export async function PATCH(
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  await connectDB();
 
-  const workspace = await Workspace.findOne({
-    _id: id,
-    'members.userId': userId,
+  const member = await db.workspaceMember.findFirst({
+    where: { workspaceId: id, userId },
   });
 
-  if (!workspace) {
+  if (!member) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  const member = workspace.members.find(
-    (m: { userId: { toString(): string }; role: string }) => m.userId.toString() === userId
-  );
-  if (!member || member.role !== 'owner') {
+  if (member.role !== 'owner') {
     return NextResponse.json({ error: 'Only owners can update workspace' }, { status: 403 });
   }
 
   const { name } = await req.json();
-  if (name) workspace.name = name;
 
-  await workspace.save();
+  const workspace = await db.workspace.update({
+    where: { id },
+    data: name ? { name } : {},
+  });
 
-  await ActivityLog.create({
-    workspaceId: id,
-    userId,
-    action: 'workspace.updated',
-    targetType: 'workspace',
-    targetId: id,
-    meta: { name },
+  await db.activityLog.create({
+    data: {
+      workspaceId: id,
+      userId,
+      action: 'workspace.updated',
+      targetType: 'workspace',
+      targetId: id,
+      meta: { name },
+    },
   });
 
   return NextResponse.json({ workspace });
@@ -79,24 +73,18 @@ export async function DELETE(
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  await connectDB();
 
-  const workspace = await Workspace.findOne({ _id: id });
+  const workspace = await db.workspace.findUnique({ where: { id } });
   if (!workspace) {
     return NextResponse.json({ error: 'Workspace not found' }, { status: 404 });
   }
 
-  if (workspace.ownerId.toString() !== userId) {
+  if (workspace.ownerId !== userId) {
     return NextResponse.json({ error: 'Only the owner can delete a workspace' }, { status: 403 });
   }
 
-  // Delete associated data
-  await Promise.all([
-    Settings.deleteMany({ workspaceId: id }),
-    Post.deleteMany({ workspaceId: id }),
-    ActivityLog.deleteMany({ workspaceId: id }),
-    Workspace.deleteOne({ _id: id }),
-  ]);
+  // Cascade deletion handled by Prisma schema (onDelete: Cascade)
+  await db.workspace.delete({ where: { id } });
 
   return NextResponse.json({ success: true });
 }
