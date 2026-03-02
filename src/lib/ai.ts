@@ -1,9 +1,3 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { writeFile, unlink } from 'fs/promises';
-import { randomUUID } from 'crypto';
-import { tmpdir } from 'os';
-import { join } from 'path';
 import { connectDB } from '@/lib/mongodb';
 import Post from '@/models/Post';
 import Settings from '@/models/Settings';
@@ -12,10 +6,10 @@ import TonePerformance from '@/models/TonePerformance';
 import ActivityLog from '@/models/ActivityLog';
 import type { AIEvaluation, EvaluateResult, Competitor, KeywordSuggestion } from '@/lib/types';
 
-const execAsync = promisify(exec);
-
 const OPENCLAW_HOST = process.env.OPENCLAW_HOST || '127.0.0.1';
 const OPENCLAW_PORT = process.env.OPENCLAW_PORT || '18789';
+const OPENCLAW_TOKEN = process.env.OPENCLAW_TOKEN || '';
+const OPENCLAW_MODEL = process.env.OPENCLAW_MODEL || 'google-antigravity/gemini-3-flash';
 
 const EVAL_BATCH_SIZE = 20;
 const DELAY_BETWEEN_EVALS_MS = 3000; // 3s between each evaluation call
@@ -77,15 +71,14 @@ IMPORTANT RULES:
 - If the post is about unrelated topics (legal, medical, news, politics, personal stories, etc.), set "relevant": false, "score": 0, and set all variation texts to empty strings.
 - Only generate reply variations if "relevant" is true.
 
-CRITICAL REPLY GUIDELINES (to avoid spam filters):
-- Do NOT mention "${companyName}" by name in any reply. Never include the brand/company name.
-- Do NOT include any calls-to-action like "check us out", "visit our site", "try our tool", etc.
-- Do NOT include any URLs or links.
-- Do NOT use marketing buzzwords like "scale", "streamline", "revolutionize", "game-changer", etc.
-- Write as a genuine, knowledgeable person sharing helpful advice or insight from experience.
-- Keep replies conversational and natural — as if a real human expert is commenting.
-- Add genuine value: share a specific tip, personal experience, or useful perspective.
-- It's OK to hint at a solution approach without naming the product (e.g., "I've found that using a managed outreach service saves a ton of time" instead of "SerpBays can help").
+CRITICAL REPLY GUIDELINES:
+- MAX 1-2 sentences per reply. Short, punchy, human. No essays.
+- Do NOT mention "${companyName}" by name. No brand names ever.
+- No CTAs ("check us out", "visit our site"), no URLs, no links.
+- No marketing buzzwords ("scale", "streamline", "revolutionize", "game-changer").
+- No filler openings ("Great question!", "Absolutely!", "That's interesting!").
+- Write like a real person dropping a quick helpful comment — not a marketer.
+- One specific tip or insight per reply. That's it.
 
 Generate ${tones.length} reply variations, one for each tone: ${tones.join(', ')}.
 
@@ -119,21 +112,20 @@ IMPORTANT RULES:
 - If the post is about unrelated topics (legal, medical, news, politics, personal stories, etc.), set "relevant": false and "score": 0.
 - Only generate a "suggestedReply" if "relevant" is true. If not relevant, set "suggestedReply" to an empty string "".
 
-CRITICAL REPLY GUIDELINES (to avoid spam filters):
-- Do NOT mention "${companyName}" by name. Never include the brand/company name.
-- Do NOT include calls-to-action like "check us out", "visit our site", "try our tool", etc.
-- Do NOT include any URLs or links.
-- Do NOT use marketing buzzwords like "scale", "streamline", "revolutionize", "game-changer", etc.
-- Write as a genuine, knowledgeable person sharing helpful advice from experience.
-- Keep it conversational and natural — like a real expert commenting.
-- Add genuine value: share a specific tip, personal experience, or useful perspective.
-- It's OK to hint at a solution approach without naming the product (e.g., "I've had great results using a managed outreach platform for this" instead of naming the brand).
+CRITICAL REPLY GUIDELINES:
+- MAX 1-2 sentences. Short, punchy, human. No essays.
+- Do NOT mention "${companyName}" by name. No brand names ever.
+- No CTAs ("check us out", "visit our site"), no URLs, no links.
+- No marketing buzzwords ("scale", "streamline", "revolutionize", "game-changer").
+- No filler openings ("Great question!", "Absolutely!", "That's interesting!").
+- Write like a real person dropping a quick helpful comment — not a marketer.
+- One specific tip or insight. That's it.
 
 Respond ONLY with valid JSON (no markdown, no code blocks, no extra text):
 {
   "relevant": true or false,
   "score": 0 to 100,
-  "suggestedReply": "A genuinely helpful reply that shares real insight or advice without naming any brand. Write as a knowledgeable person, not a marketer. Empty string if not relevant.",
+  "suggestedReply": "1-2 sentence helpful reply. No brand names. Empty string if not relevant.",
   "tone": "helpful or empathetic or informative or casual",
   "reasoning": "Brief explanation of why this is or isn't relevant"${competitorFields}
 }`;
@@ -194,18 +186,20 @@ function parseEvaluation(text: string): AIEvaluation | null {
   return null;
 }
 
-// --- Method 1: OpenClaw Gateway HTTP API ---
+// --- Method 1: OpenClaw Gateway HTTP API (OpenAI-compatible /v1/chat/completions) ---
 async function evaluateViaHTTP(prompt: string): Promise<string> {
-  const sessionId = `social-bot-eval-${Date.now()}`;
   const gatewayUrl = `http://${OPENCLAW_HOST}:${OPENCLAW_PORT}`;
 
-  const res = await fetch(`${gatewayUrl}/api/agent/run`, {
+  const res = await fetch(`${gatewayUrl}/v1/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(OPENCLAW_TOKEN ? { 'Authorization': `Bearer ${OPENCLAW_TOKEN}` } : {}),
+    },
     body: JSON.stringify({
-      message: prompt,
-      sessionId,
-      json: true,
+      model: OPENCLAW_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 1024,
     }),
     signal: AbortSignal.timeout(120000),
   });
@@ -215,65 +209,11 @@ async function evaluateViaHTTP(prompt: string): Promise<string> {
   }
 
   const data = await res.json();
-
-  return data?.payloads?.[0]?.text
-    || data?.result?.content
-    || data?.content
-    || data?.message
-    || (typeof data === 'string' ? data : JSON.stringify(data));
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error(`Empty response from OpenClaw: ${JSON.stringify(data)}`);
+  return content;
 }
 
-// --- Method 2: OpenClaw CLI (fallback) ---
-async function evaluateViaCLI(prompt: string): Promise<string> {
-  const tmpFile = join(tmpdir(), `openclaw-prompt-${randomUUID()}.txt`);
-  await writeFile(tmpFile, prompt, 'utf-8');
-
-  try {
-    const sessionId = `social-bot-eval-${Date.now()}`;
-    const { stdout } = await execAsync(
-      `openclaw agent --local --session-id "${sessionId}" --message "$(cat '${tmpFile}')" --json`,
-      { timeout: 120000, maxBuffer: 1024 * 1024 }
-    );
-
-    const lines = stdout.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('{')) {
-        try {
-          const parsed = JSON.parse(trimmed);
-          const aiText = parsed?.payloads?.[0]?.text
-            || parsed?.result?.content
-            || parsed?.content
-            || parsed?.message;
-          if (aiText) return typeof aiText === 'string' ? aiText : JSON.stringify(aiText);
-        } catch {
-          continue;
-        }
-      }
-    }
-
-    const jsonMatch = stdout.match(/\{[\s\S]*"payloads"[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      const aiText = parsed?.payloads?.[0]?.text || parsed?.content;
-      if (aiText) return typeof aiText === 'string' ? aiText : JSON.stringify(aiText);
-    }
-
-    return stdout;
-  } finally {
-    await unlink(tmpFile).catch(() => {});
-  }
-}
-
-// --- Call OpenClaw with HTTP→CLI fallback ---
-async function callOpenClaw(prompt: string): Promise<string> {
-  try {
-    return await evaluateViaHTTP(prompt);
-  } catch (httpErr) {
-    console.warn('OpenClaw HTTP failed, trying CLI:', (httpErr as Error).message);
-    return await evaluateViaCLI(prompt);
-  }
-}
 
 // --- Main evaluation function (with retry + backoff) ---
 export async function evaluatePost(
@@ -291,7 +231,7 @@ export async function evaluatePost(
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const rawResponse = await callOpenClaw(prompt);
+      const rawResponse = await evaluateViaHTTP(prompt);
 
       const evaluation = parseEvaluation(rawResponse);
       if (evaluation) return evaluation;
@@ -329,51 +269,28 @@ export async function evaluatePost(
 }
 
 // --- Direct OpenClaw agent call (for general-purpose AI tasks) ---
-export async function askOpenClaw(message: string, sessionId?: string): Promise<string> {
-  const sid = sessionId || `social-bot-${Date.now()}`;
+export async function askOpenClaw(message: string, _sessionId?: string): Promise<string> {
+  const gatewayUrl = `http://${OPENCLAW_HOST}:${OPENCLAW_PORT}`;
+  const res = await fetch(`${gatewayUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(OPENCLAW_TOKEN ? { 'Authorization': `Bearer ${OPENCLAW_TOKEN}` } : {}),
+    },
+    body: JSON.stringify({
+      model: OPENCLAW_MODEL,
+      messages: [{ role: 'user', content: message }],
+      max_tokens: 1024,
+    }),
+    signal: AbortSignal.timeout(120000),
+  });
 
-  try {
-    const gatewayUrl = `http://${OPENCLAW_HOST}:${OPENCLAW_PORT}`;
-    const res = await fetch(`${gatewayUrl}/api/agent/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, sessionId: sid, json: true }),
-      signal: AbortSignal.timeout(120000),
-    });
+  if (!res.ok) throw new Error(`OpenClaw HTTP API returned ${res.status}: ${await res.text()}`);
 
-    if (res.ok) {
-      const data = await res.json();
-      return data?.payloads?.[0]?.text || data?.content || data?.message || JSON.stringify(data);
-    }
-  } catch {
-    // fall through to CLI
-  }
-
-  const tmpFile = join(tmpdir(), `openclaw-msg-${randomUUID()}.txt`);
-  await writeFile(tmpFile, message, 'utf-8');
-
-  try {
-    const { stdout } = await execAsync(
-      `openclaw agent --local --session-id "${sid}" --message "$(cat '${tmpFile}')" --json`,
-      { timeout: 120000, maxBuffer: 1024 * 1024 }
-    );
-
-    const lines = stdout.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith('{')) {
-        try {
-          const parsed = JSON.parse(trimmed);
-          return parsed?.payloads?.[0]?.text || parsed?.content || parsed?.message || trimmed;
-        } catch {
-          continue;
-        }
-      }
-    }
-    return stdout.trim();
-  } finally {
-    await unlink(tmpFile).catch(() => {});
-  }
+  const data = await res.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error(`Empty response from OpenClaw: ${JSON.stringify(data)}`);
+  return content;
 }
 
 export function findMatchedKeywords(content: string, keywords: string[]): string[] {
